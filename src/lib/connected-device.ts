@@ -113,23 +113,77 @@ export function isOnline(lastHeartbeat: string | null | undefined, now = Date.no
   return Number.isFinite(t) && now - t < 90_000;
 }
 
-type DiscoveryLike = {
+export type StickRow = {
   id: string;
+  agent_id: string;
   device_code: string | null;
+  reported_at: string | null;
   last_reported_at: string | null;
-  device_id: string | null;
   agents: { status: string | null; last_heartbeat_at: string | null } | null;
 };
+
+const ms = (t: string | null | undefined) => Date.parse(t ?? "") || 0;
+
+/** Each stick's most recently reported laptop (a stick is on one laptop at a time). */
+function latestPerStick<T extends StickRow>(rows: T[]): Map<string, T> {
+  const latest = new Map<string, T>();
+  for (const r of rows) {
+    const cur = latest.get(r.agent_id);
+    if (!cur || ms(r.last_reported_at) > ms(cur.last_reported_at)) latest.set(r.agent_id, r);
+  }
+  return latest;
+}
+
+/**
+ * Laptops connected right now: each active, online stick's most recently reported laptop (a stick
+ * is on one laptop at a time, so older laptops it reported are not connected any more). The same
+ * laptop on two sticks appears once (newest report). Newest first.
+ */
+export function connectedLaptops<T extends StickRow>(rows: T[], now = Date.now()): T[] {
+  const latest = latestPerStick(rows);
+  const byLaptop = new Map<string, T>();
+  for (const r of latest.values()) {
+    if (r.agents?.status !== "active" || !isOnline(r.agents?.last_heartbeat_at, now)) continue;
+    const key = r.device_code ?? r.id;
+    const cur = byLaptop.get(key);
+    if (!cur || ms(r.last_reported_at) > ms(cur.last_reported_at)) byLaptop.set(key, r);
+  }
+  return [...byLaptop.values()].sort((a, b) => ms(b.last_reported_at) - ms(a.last_reported_at));
+}
+
+/**
+ * Where a stick stands relative to one of the laptops it reported. "moved": it reported another
+ * laptop since. "misfiled": it is back on this laptop, but the server files test results under the
+ * stick's laptop with the newest *first* report (migrations 0024-0026), which is another laptop.
+ */
+export function stickPosition(
+  stickRows: Array<{ id: string; reported_at: string | null; last_reported_at: string | null }>,
+  discoveryId: string,
+): "current" | "moved" | "misfiled" {
+  const top = (k: "reported_at" | "last_reported_at") =>
+    stickRows.reduce<(typeof stickRows)[number] | null>((m, r) => (!m || ms(r[k]) > ms(m[k]) ? r : m), null)?.id;
+  if (top("last_reported_at") !== discoveryId) return "moved";
+  return top("reported_at") === discoveryId ? "current" : "misfiled";
+}
+
+type DiscoveryLike = StickRow & { device_id: string | null };
 
 /**
  * One card per laptop. The same laptop (same device code) reported by several sticks collapses to a
  * single entry: the representative is an online stick if any (so Add/actions work), else the most
- * recent report; the laptop is online if any of its sticks is; `linked` is any report already in
- * inventory; `sticks` is how many reported it. Cards are ordered by most recent report.
+ * recent report; the laptop is online if a stick is on it now (connectedLaptops); `linked` is any
+ * report already in inventory; `sticks` is how many reported it. Cards are ordered by most recent report.
  */
 export function groupLaptopCards<T extends DiscoveryLike>(rows: T[], now = Date.now()) {
-  const onlineOf = (r: T) =>
-    r.agents?.status === "active" && isOnline(r.agents?.last_heartbeat_at, now);
+  // A row is online when it is its stick's latest laptop and the stick is online (an older laptop the
+  // stick moved away from is not). Two sticks on the same laptop both count, so either can act.
+  const latest = latestPerStick(rows);
+  const onlineIds = new Set(
+    [...latest.values()]
+      .filter((r) => r.agents?.status === "active" && isOnline(r.agents?.last_heartbeat_at, now))
+      .map((r) => r.id),
+  );
+  const onlineOf = (r: T) => onlineIds.has(r.id);
   const byReport = (a: T, b: T) =>
     Date.parse(b.last_reported_at ?? "") - Date.parse(a.last_reported_at ?? "");
   const groups = new Map<string, T[]>();

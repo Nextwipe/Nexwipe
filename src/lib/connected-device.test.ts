@@ -4,8 +4,10 @@ import {
   canRebootToUsb,
   deviceSections,
   deviceSummary,
+  connectedLaptops,
   groupLaptopCards,
   isOnline,
+  stickPosition,
   isCommandPending,
   helperRunsSuite,
   needsDbUpdate,
@@ -147,7 +149,9 @@ describe("groupLaptopCards", () => {
   const stale = "2026-11-10T13:55:00Z"; // older than 90s → offline
   const row = (o: Partial<Parameters<typeof groupLaptopCards>[0][number]>) => ({
     id: "d" + Math.random(),
+    agent_id: "s" + Math.random(),
     device_code: "NW-A",
+    reported_at: fresh,
     last_reported_at: fresh,
     device_id: null,
     agents: { status: "active", last_heartbeat_at: fresh },
@@ -194,6 +198,59 @@ describe("groupLaptopCards", () => {
     });
     const cards = groupLaptopCards([plain, inInventory], now);
     expect(cards[0]!.linked?.device_id).toBe("dev-1");
+  });
+});
+
+describe("connectedLaptops", () => {
+  const now = Date.parse("2026-11-10T14:10:00Z");
+  const fresh = "2026-11-10T14:09:30Z";
+  const stale = "2026-11-10T13:55:00Z";
+  const on = { status: "active", last_heartbeat_at: fresh };
+  const r = (id: string, agent_id: string, device_code: string, last: string, agents: { status: string; last_heartbeat_at: string } = on) => ({
+    id, agent_id, device_code, reported_at: "2026-11-10T13:00:00Z", last_reported_at: last, agents,
+  });
+
+  it("only the stick's most recent laptop counts as connected", () => {
+    const a = r("A", "S", "NW-A", "2026-11-10T14:00:00Z");
+    const b = r("B", "S", "NW-B", "2026-11-10T14:09:00Z");
+    expect(connectedLaptops([a, b], now).map((x) => x.id)).toEqual(["B"]);
+  });
+
+  it("drops sticks that are offline or revoked", () => {
+    expect(connectedLaptops([r("A", "S", "NW-A", fresh, { status: "active", last_heartbeat_at: stale })], now)).toEqual([]);
+    expect(connectedLaptops([r("A", "S", "NW-A", fresh, { status: "revoked", last_heartbeat_at: fresh })], now)).toEqual([]);
+  });
+
+  it("one entry when two online sticks are on the same laptop, the newer one", () => {
+    const x = r("X", "S1", "NW-A", "2026-11-10T14:05:00Z");
+    const y = r("Y", "S2", "NW-A", "2026-11-10T14:09:00Z");
+    expect(connectedLaptops([x, y], now).map((v) => v.id)).toEqual(["Y"]);
+  });
+
+  it("different laptops on different sticks, newest first", () => {
+    const x = r("X", "S1", "NW-A", "2026-11-10T14:05:00Z");
+    const y = r("Y", "S2", "NW-B", "2026-11-10T14:09:00Z");
+    expect(connectedLaptops([x, y], now).map((v) => v.id)).toEqual(["Y", "X"]);
+  });
+
+  it("groupLaptopCards: an old laptop is not online after its stick moved on", () => {
+    const a = r("A", "S", "NW-A", "2026-11-10T14:00:00Z");
+    const b = r("B", "S", "NW-B", "2026-11-10T14:09:00Z");
+    const cards = groupLaptopCards([a, b].map((v) => ({ ...v, device_id: null })), now);
+    expect(Object.fromEntries(cards.map((c) => [c.rep.id, c.anyOnline]))).toEqual({ A: false, B: true });
+  });
+});
+
+describe("stickPosition", () => {
+  const d = (id: string, reported_at: string, last_reported_at: string) => ({ id, reported_at, last_reported_at });
+  it("moved when the stick reported another laptop since", () => {
+    const rows = [d("A", "2026-11-10T13:00:00Z", "2026-11-10T14:00:00Z"), d("B", "2026-11-10T13:30:00Z", "2026-11-10T14:09:00Z")];
+    expect(stickPosition(rows, "A")).toBe("moved");
+    expect(stickPosition(rows, "B")).toBe("current");
+  });
+  it("misfiled when the stick came back to an older laptop (server files results under the newest first report)", () => {
+    const rows = [d("A", "2026-11-10T13:00:00Z", "2026-11-10T14:20:00Z"), d("B", "2026-11-10T13:30:00Z", "2026-11-10T14:09:00Z")];
+    expect(stickPosition(rows, "A")).toBe("misfiled");
   });
 });
 
