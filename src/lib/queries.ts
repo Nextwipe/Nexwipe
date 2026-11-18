@@ -421,3 +421,64 @@ export function useDiagnosticResults(by: { deviceCode?: string | null; deviceId?
     },
   });
 }
+
+// ----- Laptop board (stages, migration 0027) -----
+
+/** Stage definitions; the board's tabs come from here, never from code. */
+export function useLaptopStages() {
+  return useQuery({
+    queryKey: ["laptop-stages"],
+    staleTime: Infinity,
+    retry: (n, err) => !needsDbUpdate(err) && n < 3,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("laptop_stages")
+        .select("key, label, position, tone, is_initial, is_terminal, planned")
+        .order("position");
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** Every laptop of the company with its stage and claim; polled so Accepts by others show up. */
+export function useLaptops() {
+  const { orgId } = useOrg();
+  return useQuery({
+    queryKey: ["laptops", orgId],
+    refetchInterval: 5000,
+    retry: (n, err) => !needsDbUpdate(err) && n < 3,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("laptops")
+        .select(
+          "id, device_code, title, latest_discovery_id, stage_key, is_simulated, claimed_by, claimed_at, stage_changed_at, first_seen_at",
+        )
+        .eq("org_id", orgId)
+        .order("stage_changed_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** Stage history of one laptop, newest first. */
+export function useLaptopEvents(laptopId: string | null) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: Boolean(laptopId),
+    queryKey: ["laptop-events", orgId, laptopId],
+    retry: (n, err) => !needsDbUpdate(err) && n < 3,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("laptop_stage_events")
+        .select("id, from_key, to_key, trigger, actor, reason, created_at")
+        .eq("org_id", orgId)
+        .eq("laptop_id", laptopId!)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+}

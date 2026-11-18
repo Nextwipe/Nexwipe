@@ -398,5 +398,6 @@ function capabilityText(d: Obj): string | null {
 /** Postgres "column/table does not exist": the database has not received migration 0018 yet. */
 export function needsDbUpdate(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;
-  return code === "42703" || code === "42P01";
+  // 42703/42P01: column/table missing in SQL; PGRST205: PostgREST does not know the table yet.
+  return code === "42703" || code === "42P01" || code === "PGRST205";
 }
