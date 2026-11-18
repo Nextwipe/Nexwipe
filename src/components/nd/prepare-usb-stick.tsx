@@ -88,7 +88,9 @@ export function PrepareUsbStick({
   async function onCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const label = String(f.get("label")).trim();
+    const label =
+      String(f.get("label") ?? "").trim() ||
+      `Stick ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
     const ssid = String(f.get("ssid") ?? "").trim();
     setBusy(true);
     const { data, error } = await supabase.rpc("create_enrollment_token", {
@@ -149,13 +151,12 @@ export function PrepareUsbStick({
         {!files ? (
           <form id="prepare-stick" onSubmit={onCreate} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="stick-label">Stick name *</Label>
+              <Label htmlFor="stick-label">Stick name (optional)</Label>
               <Input
                 id="stick-label"
                 name="label"
-                required
                 maxLength={100}
-                placeholder="e.g. Stick 1, Bench 3"
+                placeholder="Leave empty to name it by today's date and time"
               />
             </div>
             <div className="space-y-1.5">

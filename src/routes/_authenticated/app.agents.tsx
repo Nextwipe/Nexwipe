@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Copy, KeyRound, Plus, RotateCw, Server, ShieldOff, Usb } from "lucide-react";
+import { Copy, KeyRound, RotateCw, Server, ShieldOff, Usb } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ function AgentsPage() {
   const [revoke, setRevoke] = useState<{ id: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [stickOpen, setStickOpen] = useState(false);
+  const [showRevoked, setShowRevoked] = useState(false);
 
   async function onCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -65,83 +66,89 @@ function AgentsPage() {
     qc.invalidateQueries({ queryKey: ["agents", orgId] });
   }
 
+  const list = agents.data ?? [];
+  const active = list.filter((a) => a.status === "active");
+  const shown = showRevoked ? list : active;
+  const unusedTokens = (tokens.data ?? []).filter((t) => !t.used_at && !t.revoked_at && new Date(t.expires_at) >= new Date()).length;
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Agents & stations"
-        description="Each station enrolls once with a single-use token and receives its own credential. Physical stations enrolled today are read-only test stations: they report hardware but can never be authorized to run erasure jobs. The erasure agent itself is a separate deliverable and is not built yet."
-        actions={<div className="flex gap-2"><Button variant="ghost" onClick={() => { qc.invalidateQueries({ queryKey: ["agents", orgId] }); qc.invalidateQueries({ queryKey: ["connected-devices", orgId] }); }}><RotateCw /> Refresh</Button>{canManage && <><Button variant="outline" onClick={() => setStickOpen(true)}><Usb /> Prepare USB stick</Button><Button onClick={() => { setToken(null); setOpen(true); }}><Plus /> Enrollment token</Button></>}</div>}
+        description="Prepare a NexWipe USB stick, plug it into a laptop and open Start NexWipe: the laptop shows up below. Sticks only read hardware. They never erase or change anything."
+        actions={<div className="flex gap-2"><Button variant="ghost" onClick={() => { qc.invalidateQueries({ queryKey: ["agents", orgId] }); qc.invalidateQueries({ queryKey: ["connected-devices", orgId] }); }}><RotateCw /> Refresh</Button>{canManage && <Button onClick={() => setStickOpen(true)}><Usb /> Prepare USB stick</Button>}</div>}
       />
-      {agents.isLoading ? <LoadingBlock /> : agents.error ? <ErrorBlock error={agents.error} /> : agents.data!.length === 0 ? (
-        <EmptyState icon={Server} title="No agents enrolled" description="Create an enrollment token for a station, or run the agent simulator." />
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card shadow-card">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 font-medium">Agent</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium">Last heartbeat</th>
-                <th className="px-4 py-2.5 font-medium">Version</th>
-                <th className="px-4 py-2.5 font-medium">Credential</th>
-                <th className="px-4 py-2.5 font-medium">Enrolled</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {agents.data!.map((a) => {
-                const hb = heartbeatState(a.last_heartbeat_at);
-                return (
-                  <tr key={a.id}>
-                    <td className="px-4 py-2.5"><p className="font-medium text-foreground">{a.name}</p>{a.is_simulated && <SimulatedBadge className="mt-1" />}{a.read_only && <ToneBadge tone="info" className="mt-1">Read-only test station</ToneBadge>}</td>
-                    <td className="px-4 py-2.5">{a.status === "active" ? <ToneBadge tone="success">Active</ToneBadge> : <ToneBadge tone="danger">Revoked</ToneBadge>}</td>
-                    <td className="px-4 py-2.5">{a.status === "active" ? <ToneBadge tone={HB_TONE[hb]}>{relativeTime(a.last_heartbeat_at)}</ToneBadge> : <span className="text-muted-foreground">—</span>}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">{a.agent_version ?? "—"}</td>
-                    <td className="px-4 py-2.5"><Mono className="text-muted-foreground">{a.credential_prefix}…</Mono></td>
-                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{formatDateTime(a.enrolled_at)}</td>
-                    <td className="px-4 py-2.5 text-right">
-                      {a.status === "active" && (canManage || (a.is_simulated && can(role, "simulator.run"))) && (
-                        <Button variant="ghost" size="sm" onClick={() => setRevoke({ id: a.id, name: a.name })}><ShieldOff /> Revoke</Button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
 
       <StationDiscoveries />
       {canManage && <PrepareUsbStick open={stickOpen} onOpenChange={setStickOpen} />}
 
-      {canManage && (tokens.data?.length ?? 0) > 0 && (
-        <details className="group rounded-lg border border-border bg-card">
-          <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground marker:hidden">
-            <KeyRound className="mr-2 inline size-3.5 text-muted-foreground" />Enrollment tokens
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {tokens.data!.filter((t) => !t.used_at && !t.revoked_at && new Date(t.expires_at) >= new Date()).length} unused · last {tokens.data!.length} · click to show
-            </span>
-          </summary>
-          <div className="overflow-x-auto border-t border-border">
-            <table className="w-full text-sm">
-              <tbody className="divide-y divide-border">
-                {tokens.data!.map((t) => {
-                  const state = t.used_at ? "Used" : t.revoked_at ? "Revoked" : new Date(t.expires_at) < new Date() ? "Expired" : "Unused";
-                  return (
-                    <tr key={t.id}>
-                      <td className="px-4 py-2 text-foreground"><KeyRound className="mr-2 inline size-3.5 text-muted-foreground" />{t.label} {t.is_simulated && <SimulatedBadge className="ml-1" />}</td>
-                      <td className="px-4 py-2"><ToneBadge tone={state === "Unused" ? "info" : "neutral"}>{state}</ToneBadge></td>
-                      <td className="px-4 py-2 text-xs text-muted-foreground">Expires {formatDateTime(t.expires_at)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+      {/* ponytail: renders every stick in one list; add search/paging when a company really has thousands */}
+      <details className="rounded-lg border border-border bg-card">
+        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground marker:hidden">
+          <Server className="mr-2 inline size-3.5 text-muted-foreground" />USB sticks &amp; stations
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            {agents.isLoading ? "loading…" : `${active.length} active${list.length > active.length ? ` · ${list.length - active.length} revoked` : ""}`} · click to show
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">Each stick signs in with its own credential. All physical stations are read-only: they can never be authorized to run erasure jobs. A stick&apos;s sign-in proves which stick sent a report, not that the hardware is real.</p>
+            <div className="flex gap-2">
+              {list.length > active.length && <Button variant="ghost" size="sm" onClick={() => setShowRevoked((v) => !v)}>{showRevoked ? "Hide revoked" : "Show revoked"}</Button>}
+              {canManage && <Button variant="outline" size="sm" onClick={() => { setToken(null); setOpen(true); }}><KeyRound /> Enrollment token</Button>}
+            </div>
           </div>
-        </details>
-      )}
+          {agents.isLoading ? <LoadingBlock /> : agents.error ? <ErrorBlock error={agents.error} /> : shown.length === 0 ? (
+            <EmptyState icon={Server} title="No sticks connected yet" description="Use Prepare USB stick, then start it on a laptop." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Stick</th>
+                    <th className="px-3 py-2 font-medium">Last seen</th>
+                    <th className="px-3 py-2 font-medium">Version</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {shown.map((a) => (
+                    <tr key={a.id}>
+                      <td className="px-3 py-2"><span className="font-medium text-foreground">{a.name}</span>{a.is_simulated && <SimulatedBadge className="ml-2" />}{a.status !== "active" && <ToneBadge tone="danger" className="ml-2">Revoked</ToneBadge>}</td>
+                      <td className="px-3 py-2">{a.status === "active" ? <ToneBadge tone={HB_TONE[heartbeatState(a.last_heartbeat_at)]}>{relativeTime(a.last_heartbeat_at)}</ToneBadge> : <span className="text-muted-foreground">—</span>}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{a.agent_version ?? "—"}</td>
+                      <td className="px-3 py-2 text-right">
+                        {a.status === "active" && (canManage || (a.is_simulated && can(role, "simulator.run"))) && (
+                          <Button variant="ghost" size="sm" onClick={() => setRevoke({ id: a.id, name: a.name })}><ShieldOff /> Revoke</Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {canManage && (tokens.data?.length ?? 0) > 0 && (
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground">Enrollment tokens · {unusedTokens} unused · last {tokens.data!.length}</summary>
+              <table className="mt-2 w-full text-sm">
+                <tbody className="divide-y divide-border">
+                  {tokens.data!.map((t) => {
+                    const state = t.used_at ? "Used" : t.revoked_at ? "Revoked" : new Date(t.expires_at) < new Date() ? "Expired" : "Unused";
+                    return (
+                      <tr key={t.id}>
+                        <td className="px-3 py-1.5 text-foreground">{t.label} {t.is_simulated && <SimulatedBadge className="ml-1" />}</td>
+                        <td className="px-3 py-1.5"><ToneBadge tone={state === "Unused" ? "info" : "neutral"}>{state}</ToneBadge></td>
+                        <td className="px-3 py-1.5 text-xs text-muted-foreground">Expires {formatDateTime(t.expires_at)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </details>
+          )}
+        </div>
+      </details>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

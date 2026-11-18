@@ -90,8 +90,8 @@ function Setup() {
         <Step n={4} done={p.device} title="Connect your first device">
           <ul className="mt-2 space-y-3">
             <Check done={p.station} label="Create a station enrollment token">
-              On <Link to="/app/agents" className="underline underline-offset-4">Agents &amp; stations</Link>, choose
-              <span className="font-medium"> Enrollment token</span>. It’s shown once and expires.
+              On <Link to="/app/agents" className="underline underline-offset-4">Agents &amp; stations</Link>, open
+              <span className="font-medium"> USB sticks &amp; stations</span> and choose <span className="font-medium">Enrollment token</span>. It’s shown once and expires.
             </Check>
             <Check done={p.station} label="Boot a laptop from the read-only station USB">
               Get the station USB image and instructions from{" "}

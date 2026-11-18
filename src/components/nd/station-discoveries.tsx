@@ -58,10 +58,7 @@ export function StationDiscoveries() {
           Connected devices
         </h2>
         <p className="text-sm text-muted-foreground">
-          Laptops reported by a NexWipe USB stick. Use Refresh at the top of the page to see new
-          reports. Click a laptop for its full details and barcode. Reporting only reads hardware
-          details: nothing on the laptop is changed and no erasure is started. A station’s sign-in
-          proves which stick sent a report, not that the hardware physically exists.
+          Laptops reported by a NexWipe USB stick. Click one for full details and its barcode.
         </p>
       </div>
       {q.isLoading ? (
