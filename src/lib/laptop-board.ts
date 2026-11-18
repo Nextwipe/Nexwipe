@@ -48,3 +48,34 @@ async function rpc(name: "accept_laptop" | "release_laptop", id: string) {
 }
 export const acceptLaptop = (id: string) => rpc("accept_laptop", id);
 export const releaseLaptop = (id: string) => rpc("release_laptop", id);
+
+/** One line of a laptop's stage history in plain words. `who` is the actor's name (null = system). */
+export function stageEventText(
+  e: {
+    trigger: string;
+    from_key: string | null;
+    to_key: string;
+    actor: string | null;
+    reason: string | null;
+  },
+  stageLabel: (key: string | null) => string,
+  who: string | null,
+): string {
+  const name = who ?? "Someone";
+  switch (e.trigger) {
+    case "report":
+      return "First reported by a NexWipe stick";
+    case "backfill":
+      return `Was ${stageLabel(e.to_key)} when stages were introduced`;
+    case "accept":
+      return `${name} accepted it`;
+    case "release":
+      return `${name} released it back to ${stageLabel(e.to_key)}`;
+    case "test_again":
+      return `${name} started the test again`;
+    case "test_result":
+      return `Moved to ${stageLabel(e.to_key)} by a test result`;
+    default:
+      return `Moved to ${stageLabel(e.to_key)}${e.actor ? ` by ${name}` : ""}`;
+  }
+}

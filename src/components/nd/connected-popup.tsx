@@ -1,11 +1,14 @@
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Laptop, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SimulatedBadge } from "@/components/nd/status-badge";
 import { useOrg } from "@/lib/org-context";
 import { can } from "@/lib/permissions";
-import { useConnectedNow } from "@/lib/queries";
+import { useConnectedNow, useLaptops } from "@/lib/queries";
+import { acceptLaptop } from "@/lib/laptop-board";
+import { errorMessage } from "@/components/nd/page";
 import { relativeTime } from "@/lib/jobs";
 import { connectedLaptops } from "@/lib/connected-device";
 import {
@@ -16,7 +19,10 @@ import {
   type Dismissals,
 } from "@/lib/connected-popup";
 
-/** "Laptop connected" corner card on every app page; flips between laptops when several are connected. */
+/**
+ * "Laptop connected" corner card on every app page; flips between laptops when several are connected.
+ * With laptop stages (0027) it shows only laptops still waiting to be accepted, and asks to Accept.
+ */
 export function ConnectedPopup() {
   const { role } = useOrg();
   if (!can(role, "agents.view")) return null;
@@ -25,6 +31,11 @@ export function ConnectedPopup() {
 
 function ConnectedPopupCard() {
   const q = useConnectedNow();
+  const laptops = useLaptops();
+  const { orgId } = useOrg();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const params = useParams({ strict: false }) as { discoveryId?: string };
   const [dismissed, setDismissed] = useState<Dismissals>(loadDismissals);
   const [index, setIndex] = useState(0);
@@ -36,7 +47,20 @@ function ConnectedPopupCard() {
     const t = setInterval(() => setTick(Date.now()), 5000);
     return () => clearInterval(t);
   }, []);
-  const connected = useMemo(() => connectedLaptops(q.data ?? [], tick), [q.data, tick]);
+  // Laptop id per device code for laptops still Pending; null until stages exist (before 0027).
+  const pending = useMemo(
+    () =>
+      laptops.data
+        ? new Map(
+            laptops.data.filter((l) => l.stage_key === "pending").map((l) => [l.device_code, l.id]),
+          )
+        : null,
+    [laptops.data],
+  );
+  const connected = useMemo(() => {
+    const now = connectedLaptops(q.data ?? [], tick);
+    return pending ? now.filter((c) => c.device_code && pending.has(c.device_code)) : now;
+  }, [q.data, tick, pending]);
 
   // Forget dismissals for laptops that disconnected (or after an hour), so they pop up next time.
   useEffect(() => {
@@ -56,7 +80,26 @@ function ConnectedPopupCard() {
   const firstId = queue[0]?.id;
   useEffect(() => setIndex(0), [firstId]); // a new arrival jumps to the front
 
-  if (queue.length === 0) return null;
+  const waiting = connected.filter((c) => c.id !== params.discoveryId).length;
+  if (queue.length === 0) {
+    if (!pending || waiting === 0) return null;
+    // Everything waiting was put off with Later: keep a small reminder that brings them back.
+    return (
+      <Button
+        className="fixed bottom-4 right-4 z-50 shadow-lg"
+        onClick={() => {
+          const back = new Set(connected.map((c) => c.id));
+          setDismissed((d) => {
+            const next = Object.fromEntries(Object.entries(d).filter(([id]) => !back.has(id)));
+            saveDismissals(next);
+            return next;
+          });
+        }}
+      >
+        <Laptop /> {waiting} laptop{waiting === 1 ? "" : "s"} waiting
+      </Button>
+    );
+  }
   const i = Math.min(index, queue.length - 1);
   const l = queue[i]!;
   const title = [l.sys?.manufacturer, l.sys?.model].filter(Boolean).join(" ") || "Unknown laptop";
@@ -103,15 +146,46 @@ function ConnectedPopupCard() {
         {relativeTime(l.last_reported_at)}
       </p>
       {l.is_simulated && <SimulatedBadge className="mt-2" />}
-      <Button asChild size="lg" className="mt-3 w-full">
-        <Link
-          to="/app/connected/$discoveryId"
-          params={{ discoveryId: l.id }}
-          onClick={() => dismiss(l.id)}
-        >
-          Open laptop
-        </Link>
-      </Button>
+      {pending && l.device_code && pending.get(l.device_code) ? (
+        <>
+          <Button
+            size="lg"
+            className="mt-3 w-full"
+            onClick={async () => {
+              setAcceptError(null);
+              try {
+                await acceptLaptop(pending.get(l.device_code!)!);
+                qc.invalidateQueries({ queryKey: ["laptops", orgId] });
+                navigate({ to: "/app/connected/$discoveryId", params: { discoveryId: l.id } });
+              } catch (err) {
+                setAcceptError(errorMessage(err));
+                qc.invalidateQueries({ queryKey: ["laptops", orgId] });
+              }
+            }}
+          >
+            Accept
+          </Button>
+          {acceptError && <p className="mt-1 text-sm text-danger">{acceptError}</p>}
+          <Link
+            to="/app/connected/$discoveryId"
+            params={{ discoveryId: l.id }}
+            onClick={() => dismiss(l.id)}
+            className="mt-1 block text-center text-xs text-muted-foreground hover:underline"
+          >
+            Open without accepting
+          </Link>
+        </>
+      ) : (
+        <Button asChild size="lg" className="mt-3 w-full">
+          <Link
+            to="/app/connected/$discoveryId"
+            params={{ discoveryId: l.id }}
+            onClick={() => dismiss(l.id)}
+          >
+            Open laptop
+          </Link>
+        </Button>
+      )}
       {queue.length > 1 && (
         <div className="mt-2 flex items-center justify-between">
           <Button variant="ghost" size="sm" disabled={i === 0} onClick={() => setIndex(i - 1)}>

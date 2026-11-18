@@ -39,7 +39,7 @@ export function LaptopBoard() {
   const [virtualBusy, setVirtualBusy] = useState(false);
   const [virtualError, setVirtualError] = useState<string | null>(null);
 
-  const all = laptops.data ?? [];
+  const all = useMemo(() => laptops.data ?? [], [laptops.data]);
   const tabs = useMemo(
     () => boardTabs(stages.data ?? [], all, mine && me ? me : undefined),
     [stages.data, all, mine, me],

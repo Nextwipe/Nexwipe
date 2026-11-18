@@ -28,6 +28,11 @@ import { useOrg } from "@/lib/org-context";
 import { can } from "@/lib/permissions";
 import {
   formatDateTime,
+  memberName,
+  useLaptopEvents,
+  useLaptopStages,
+  useLaptops,
+  useMembers,
   useConnectedDevice,
   useDiagnosticResults,
   useLaptopHistory,
@@ -48,6 +53,8 @@ import {
 import { reviewFlags } from "@/lib/discovery";
 import { tagFields } from "@/lib/device-tag";
 import { DeviceTagDialog, GradeSelect } from "@/components/nd/device-tag-dialog";
+import { LaptopClaimBar, useClaimGuard, useLaptopByCode } from "@/components/nd/laptop-claim";
+import { stageEventText } from "@/lib/laptop-board";
 
 export const Route = createFileRoute("/_authenticated/app/connected/$discoveryId")({
   staticData: { sitemap: false },
@@ -99,6 +106,12 @@ function ConnectedDevicePage() {
   const diag = useDiagnosticResults({ deviceCode: q.data?.device_code ?? null });
   const history = useLaptopHistory(q.data?.device_code ?? null);
   const stick = useStickDiscoveries(q.data?.agent_id ?? null);
+  const laptopsQ = useLaptops();
+  const stages = useLaptopStages();
+  const members = useMembers();
+  const lap = useLaptopByCode(q.data?.device_code ?? null);
+  const stageEvents = useLaptopEvents(lap?.id ?? null);
+  const { guard, dialog: claimDialog } = useClaimGuard(q.data?.device_code ?? null);
   const [busy, setBusy] = useState<string | null>(null);
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null);
   const [tagOpen, setTagOpen] = useState(false);
@@ -134,6 +147,10 @@ function ConnectedDevicePage() {
   const flags = reviewFlags(d.review_flags);
   // Unknown until the stick's laptops have loaded: Run test waits, so a result can't be misfiled.
   const position = stick.data ? stickPosition(stick.data, d.id) : null;
+  // With laptop stages (0027) the server files results under the stick's current laptop, so a
+  // stick that came back to this laptop (A -> B -> A) is fine; before 0027 it is not.
+  const stagesLive = !!laptopsQ.data;
+  const testable = position === "current" || (position === "misfiled" && stagesLive);
   const stickOnline = ag?.status === "active" && isOnline(ag?.last_heartbeat_at);
   const online = stickOnline && position !== "moved";
   const mayAct = can(role, "stations.act") && ag?.status === "active";
@@ -154,7 +171,7 @@ function ConnectedDevicePage() {
       ? "The stick that reported this laptop has been revoked, so the buttons are off."
       : position === "moved"
         ? "This stick is now on another laptop. Start NexWipe on this laptop again to test it."
-        : position === "misfiled"
+        : position === "misfiled" && !stagesLive
           ? "Results from this stick would be filed under another laptop. Use a different stick for this laptop."
           : !stickOnline
             ? "Not connected. Plug in a NexWipe stick and open Start NexWipe on this laptop."
@@ -220,6 +237,14 @@ function ConnectedDevicePage() {
         text: `${r.agents?.name ?? "A stick"} ran the ${r.test === "full" ? "test" : `${r.test} test`} · ${res} · ${formatDateTime(r.created_at)}`,
       };
     }),
+    ...(stageEvents.data ?? []).map((e) => ({
+      at: e.created_at,
+      text: `${stageEventText(
+        e,
+        (k) => (stages.data ?? []).find((st) => st.key === k)?.label ?? k ?? "",
+        e.actor ? memberName((members.data ?? []).find((m) => m.user_id === e.actor)) : null,
+      )} · ${formatDateTime(e.created_at)}`,
+    })),
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 
   return (
@@ -258,6 +283,7 @@ function ConnectedDevicePage() {
             </ToneBadge>
           )}
         </div>
+        <LaptopClaimBar deviceCode={d.device_code} />
       </div>
 
       <section aria-label="Actions" className="space-y-2">
@@ -266,8 +292,8 @@ function ConnectedDevicePage() {
             icon={Play}
             label="Run test"
             primary
-            disabled={!canStickAct || position !== "current" || diagPending || oldHelper}
-            onClick={runTest}
+            disabled={!canStickAct || !testable || diagPending || oldHelper}
+            onClick={() => guard(runTest)}
           />
           {d.device_id ? (
             <Button
@@ -290,7 +316,9 @@ function ConnectedDevicePage() {
               sub={!canAdd ? "Not available" : !online ? "Connect first" : undefined}
               disabled={!canAdd || !online}
               onClick={() =>
-                setAddTarget({ id: d.id, serial: d.system_serial!, code: d.device_code })
+                guard(() =>
+                  setAddTarget({ id: d.id, serial: d.system_serial!, code: d.device_code }),
+                )
               }
             />
           )}
@@ -318,7 +346,7 @@ function ConnectedDevicePage() {
             icon={RefreshCw}
             label="Rescan"
             disabled={!canStickAct || position === "moved"}
-            onClick={rescan}
+            onClick={() => guard(rescan)}
           />
           <Tile icon={Eraser} label="Erase" sub="Planned" disabled />
         </div>
@@ -400,6 +428,7 @@ function ConnectedDevicePage() {
 
       {tag && <DeviceTagDialog fields={tag} open={tagOpen} onOpenChange={setTagOpen} />}
       <AddToInventoryDialog target={addTarget} onClose={() => setAddTarget(null)} />
+      {claimDialog}
     </div>
   );
 }
