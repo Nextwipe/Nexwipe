@@ -350,6 +350,7 @@ export function useConnectedDevice(discoveryId: string) {
   const { orgId } = useOrg();
   return useQuery({
     queryKey: ["connected-device", orgId, discoveryId],
+    refetchInterval: 5000, // the laptop page follows heartbeats, test status and rescans by itself
     retry: (n, err) => !needsDbUpdate(err) && n < 3,
     queryFn: async () => {
       const { data, error } = await supabase

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const fresh = () => new Date(Date.now() - 5_000).toISOString();
 const row = (id: string, agent: string, code: string, model: string, ageMs = 0) => ({
@@ -58,6 +58,16 @@ describe("ConnectedPopup", () => {
     cleanup();
     render(<ConnectedPopup />);
     expect(screen.queryByText("Laptop connected")).toBeNull();
+  });
+
+  it("goes away when the stick stops checking in, even if the data does not change", () => {
+    vi.useFakeTimers();
+    rows = [row("A", "1", "NW-A", "ENVY")];
+    render(<ConnectedPopup />);
+    expect(screen.getByText("Laptop connected")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(120_000));
+    expect(screen.queryByText("Laptop connected")).toBeNull();
+    vi.useRealTimers();
   });
 
   it("does not pop up the laptop whose page is open", () => {

@@ -1,5 +1,23 @@
 import { useState } from "react";
-import { ClipboardCheck, Keyboard, LayoutGrid } from "lucide-react";
+import {
+  Battery,
+  Camera,
+  CheckCircle2,
+  CircleDashed,
+  Keyboard,
+  Laptop,
+  LayoutGrid,
+  Mic,
+  Monitor,
+  MousePointer2,
+  PlugZap,
+  Sparkles,
+  Usb,
+  Volume2,
+  Wifi,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
 import { ToneBadge, SimulatedBadge, type Tone } from "@/components/nd/status-badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -14,6 +32,7 @@ export type DiagnosticResult = {
   detail: string | null;
   is_simulated: boolean;
   created_at: string;
+  agents?: { name: string } | null;
 };
 
 type KeyboardPayload = {
@@ -70,13 +89,18 @@ function obj<T>(v: unknown): T {
 }
 
 /** Passed count and failed part names of a complete-suite result; null for other tests. */
-export function suiteSummary(r: Pick<DiagnosticResult, "test" | "result">): { passed: number; failed: string[] } | null {
+export function suiteSummary(
+  r: Pick<DiagnosticResult, "test" | "result">,
+): { passed: number; failed: string[]; unfinished: string[] } | null {
   if (r.test !== "full") return null;
   const tests = obj<{ tests?: Record<string, Part> }>(r.result).tests ?? {};
   const parts = PART_LABEL.filter(([k]) => tests[k]);
   return {
     passed: parts.filter(([k]) => tests[k]!.outcome === "pass").length,
     failed: parts.filter(([k]) => tests[k]!.outcome === "fail").map(([, label]) => label),
+    unfinished: parts
+      .filter(([k]) => !["pass", "fail"].includes(tests[k]!.outcome ?? ""))
+      .map(([, label]) => label),
   };
 }
 
@@ -103,35 +127,100 @@ function valuesLine(values: Part["values"]): string {
     .join(" · ");
 }
 
-function FullParts({ result }: { result: unknown }) {
-  const tests = obj<{ tests?: Record<string, Part> }>(result).tests ?? {};
+const PART_ICON: Record<string, LucideIcon> = {
+  keyboard: Keyboard,
+  display: Monitor,
+  webcam: Camera,
+  microphone: Mic,
+  speakers: Volume2,
+  touchpad: MousePointer2,
+  battery: Battery,
+  charging: PlugZap,
+  wifi: Wifi,
+  ports: Usb,
+  hinges: Laptop,
+  body: Sparkles,
+};
+
+const TILE_TONE: Record<string, string> = {
+  pass: "border-success/30 bg-success-soft text-success",
+  fail: "border-danger/30 bg-danger-soft text-danger",
+};
+
+/** One plain-words verdict for a laptop's latest suite, from the suite's own outcome. */
+export function suiteVerdict(
+  r: Pick<DiagnosticResult, "test" | "outcome" | "result"> | null | undefined,
+): { tone: Tone; label: string } {
+  if (!r) return { tone: "neutral", label: "Not tested" };
+  if (r.outcome === "pass") return { tone: "success", label: "All passed" };
+  if (r.outcome === "fail") {
+    const n = suiteSummary(r)?.failed.length || 1;
+    return { tone: "danger", label: `${n} problem${n === 1 ? "" : "s"} found` };
+  }
+  return { tone: "warning", label: "Test not finished" };
+}
+
+function partDetail(k: string, p: Part): string {
+  return k === "keyboard"
+    ? `${p.keys_registered?.length ?? 0} keys registered` +
+        (p.extra_keys?.length ? `, ${p.extra_keys.length} extra (Fn / media)` : "")
+    : valuesLine(p.values);
+}
+
+/** Picture grid of the suite's parts: green pass, red fail, grey not finished. Tap a part for its details. */
+function PartsGrid({ r, onKeyboardMap }: { r: DiagnosticResult; onKeyboardMap: () => void }) {
+  const tests = obj<{ tests?: Record<string, Part> }>(r.result).tests ?? {};
+  const parts = PART_LABEL.filter(([k]) => tests[k]);
+  const [open, setOpen] = useState<string | null>(null);
+  const sel = open ? tests[open] : null;
   return (
-    <ul className="mt-2 divide-y divide-border/60 rounded-md border border-border/60">
-      {PART_LABEL.filter(([k]) => tests[k]).map(([k, label]) => {
-        const p = tests[k] as Part;
-        const extra =
-          k === "keyboard"
-            ? `${p.keys_registered?.length ?? 0} keys registered` +
-              (p.extra_keys?.length ? `, ${p.extra_keys.length} extra (Fn / media)` : "")
-            : valuesLine(p.values);
-        return (
-          <li key={k} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-1.5">
-            <span className="w-28 shrink-0 text-foreground">{label}</span>
-            {outcomeBadge(p.outcome)}
-            {p.note && (
-              <span className={p.outcome === "fail" ? "text-danger" : "text-muted-foreground"}>
-                {p.note}
-              </span>
-            )}
-            {extra && <span className="text-xs text-muted-foreground">{extra}</span>}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+        {parts.map(([k, label]) => {
+          const p = tests[k]!;
+          const Icon = PART_ICON[k] ?? CircleDashed;
+          return (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={open === k}
+              onClick={() => setOpen(open === k ? null : k)}
+              className={`flex flex-col items-center gap-1.5 rounded-lg border px-2 py-3 text-sm font-semibold transition-shadow ${TILE_TONE[p.outcome ?? ""] ?? "border-border bg-muted text-muted-foreground"} ${open === k ? "ring-2 ring-ring" : ""}`}
+            >
+              <Icon className="size-6" aria-hidden />
+              {label}
+              <span className="sr-only">: {OUTCOME[p.outcome ?? ""]?.label ?? p.outcome}</span>
+            </button>
+          );
+        })}
+      </div>
+      {open && sel ? (
+        <div className="space-y-1 rounded-md border border-border p-3 text-sm">
+          <p className="flex items-center gap-2 font-medium text-foreground">
+            {PART_LABEL.find(([k]) => k === open)?.[1]} {outcomeBadge(sel.outcome)}
+          </p>
+          {sel.note && (
+            <p className={sel.outcome === "fail" ? "text-danger" : "text-muted-foreground"}>
+              {sel.note}
+            </p>
+          )}
+          {partDetail(open, sel) && (
+            <p className="text-xs text-muted-foreground">{partDetail(open, sel)}</p>
+          )}
+          {open === "keyboard" && (sel.keys_registered?.length ?? 0) > 0 && (
+            <Button variant="outline" size="sm" className="mt-1" onClick={onKeyboardMap}>
+              <LayoutGrid /> View keyboard map
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Tap a part to see its details.</p>
+      )}
+    </div>
   );
 }
 
-/** Recent agent-run diagnostics for one laptop. Technician test records; not an erasure outcome. */
+/** Latest diagnostics for one laptop as a picture grid; earlier runs folded. Not an erasure outcome. */
 export function DiagnosticResultsCard({
   results,
 }: {
@@ -140,60 +229,92 @@ export function DiagnosticResultsCard({
   const [mapFor, setMapFor] = useState<DiagnosticResult | null>(null);
   if (!results || results.length === 0) return null;
   const mapKb = mapFor ? keyboardOf(mapFor) : null;
+  const [latest, ...earlier] = results;
+  const r = latest!;
+  const v = r.test === "full" ? suiteVerdict(r) : null;
+  const k = keyboardOf(r);
+  const VIcon =
+    v?.tone === "success" ? CheckCircle2 : v?.tone === "danger" ? XCircle : CircleDashed;
   return (
-    <section className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-card">
-      <h2 className="font-medium text-foreground">Diagnostics run on the laptop</h2>
-      <ul className="space-y-3">
-        {results.map((r) => {
-          const k = keyboardOf(r);
-          const registered = k?.keys_registered?.length ?? 0;
-          const flagged = k?.keys_flagged ?? [];
-          const Icon = r.test === "full" ? ClipboardCheck : Keyboard;
-          return (
-            <li key={r.id} className="rounded-md border border-border/70 p-3 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <Icon className="size-4 text-muted-foreground" />
-                <span className="font-medium text-foreground">{TEST_LABEL[r.test] ?? r.test}</span>
-                {outcomeBadge(r.outcome)}
-                {r.is_simulated && <SimulatedBadge />}
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {formatDateTime(r.created_at)}
+    <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-card">
+      <div className="flex flex-wrap items-center gap-2">
+        {v ? (
+          <h2
+            className={`flex items-center gap-2 text-lg font-semibold ${v.tone === "success" ? "text-success" : v.tone === "danger" ? "text-danger" : "text-foreground"}`}
+          >
+            <VIcon className="size-5" aria-hidden /> {v.label}
+          </h2>
+        ) : (
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
+            <Keyboard className="size-5" aria-hidden /> {TEST_LABEL[r.test] ?? r.test}{" "}
+            {outcomeBadge(r.outcome)}
+          </h2>
+        )}
+        {r.is_simulated && <SimulatedBadge />}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {r.agents?.name ? `${r.agents.name} · ` : ""}
+          {formatDateTime(r.created_at)}
+        </span>
+      </div>
+
+      {r.test === "full" ? (
+        <PartsGrid key={r.id} r={r} onKeyboardMap={() => setMapFor(r)} />
+      ) : (
+        k && (
+          <div className="space-y-2 text-sm text-muted-foreground">
+            <p>
+              {k.keys_registered?.length ?? 0} keys registered
+              {(k.keys_flagged?.length ?? 0) > 0 && (
+                <span className="text-danger">
+                  {" "}
+                  · {k.keys_flagged!.length} flagged: {k.keys_flagged!.join(", ")}
                 </span>
-              </div>
-              {r.test === "full" ? (
-                <FullParts result={r.result} />
-              ) : (
-                k && (
-                  <>
-                    <p className="mt-1 text-muted-foreground">
-                      {registered} key{registered === 1 ? "" : "s"} registered
-                      {flagged.length > 0 && (
-                        <span className="text-danger">
-                          {" "}
-                          · {flagged.length} flagged: {flagged.join(", ")}
-                        </span>
-                      )}
-                    </p>
-                    {k.note && <p className="mt-1 text-muted-foreground">Note: {k.note}</p>}
-                  </>
-                )
               )}
-              {r.detail && <p className="mt-1 text-xs text-muted-foreground">{r.detail}</p>}
-              {k && (k.keys_registered?.length ?? 0) > 0 && (
-                <Button variant="outline" size="sm" className="mt-2" onClick={() => setMapFor(r)}>
-                  <LayoutGrid /> View keyboard map
-                </Button>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+            </p>
+            {(k.keys_registered?.length ?? 0) > 0 && (
+              <Button variant="outline" size="sm" onClick={() => setMapFor(r)}>
+                <LayoutGrid /> View keyboard map
+              </Button>
+            )}
+          </div>
+        )
+      )}
+
+      {earlier.length > 0 && (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted-foreground">
+            Earlier tests ({earlier.length})
+          </summary>
+          <ul className="mt-2 divide-y divide-border rounded-md border border-border">
+            {earlier.map((e) => (
+              <li key={e.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                <span className="text-foreground">
+                  {e.test === "full"
+                    ? suiteVerdict(e).label
+                    : `${TEST_LABEL[e.test] ?? e.test}: ${OUTCOME[e.outcome]?.label ?? e.outcome}`}
+                </span>
+                {e.is_simulated && <SimulatedBadge />}
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {e.agents?.name ? `${e.agents.name} · ` : ""}
+                  {formatDateTime(e.created_at)}
+                </span>
+                {keyboardOf(e)?.keys_registered?.length ? (
+                  <Button variant="ghost" size="sm" onClick={() => setMapFor(e)}>
+                    <LayoutGrid /> Keyboard map
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <p className="text-xs text-muted-foreground">
-        A key registering means it was pressed, not that it feels good; the technician judges sticky
-        or worn keys. Diagnostics never change a grade.
+        Diagnostics never change a grade. A key registering means it was pressed, not that it feels
+        good.
       </p>
 
-      <Dialog open={!!mapFor} onOpenChange={(v) => !v && setMapFor(null)}>
+      <Dialog open={!!mapFor} onOpenChange={(o) => !o && setMapFor(null)}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>

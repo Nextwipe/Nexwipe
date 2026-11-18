@@ -29,7 +29,14 @@ function ConnectedPopupCard() {
   const [dismissed, setDismissed] = useState<Dismissals>(loadDismissals);
   const [index, setIndex] = useState(0);
 
-  const connected = useMemo(() => connectedLaptops(q.data ?? []), [q.data]);
+  // Re-check every 5 s even when the polled data is unchanged: a stick that stops checking in returns
+  // identical rows, and only the clock says it is gone.
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setTick(Date.now()), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const connected = useMemo(() => connectedLaptops(q.data ?? [], tick), [q.data, tick]);
 
   // Forget dismissals for laptops that disconnected (or after an hour), so they pop up next time.
   useEffect(() => {
@@ -43,7 +50,7 @@ function ConnectedPopupCard() {
       if (next !== d) saveDismissals(next);
       return next;
     });
-  }, [q.data, connected]);
+  }, [q.data, connected, tick]);
 
   const queue = popupQueue(connected, dismissed, params.discoveryId);
   const firstId = queue[0]?.id;

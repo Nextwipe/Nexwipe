@@ -33,7 +33,7 @@ import {
   useLaptopHistory,
   useStickDiscoveries,
 } from "@/lib/queries";
-import { DiagnosticResultsCard, suiteSummary } from "@/components/nd/diagnostics";
+import { DiagnosticResultsCard, suiteSummary, suiteVerdict } from "@/components/nd/diagnostics";
 import {
   canRebootToUsb,
   helperRunsSuite,
@@ -132,8 +132,8 @@ function ConnectedDevicePage() {
   const s = deviceSummary(d.payload);
   const sections = deviceSections(d.payload);
   const flags = reviewFlags(d.review_flags);
-  // Until the stick's laptops have loaded, assume it is still here (the server re-checks anyway).
-  const position = stick.data ? stickPosition(stick.data, d.id) : "current";
+  // Unknown until the stick's laptops have loaded: Run test waits, so a result can't be misfiled.
+  const position = stick.data ? stickPosition(stick.data, d.id) : null;
   const stickOnline = ag?.status === "active" && isOnline(ag?.last_heartbeat_at);
   const online = stickOnline && position !== "moved";
   const mayAct = can(role, "stations.act") && ag?.status === "active";
@@ -145,7 +145,7 @@ function ConnectedDevicePage() {
     !diagPending;
   const tag = d.device_id ? tagFields(d.payload, d.device_code, d.devices?.grade ?? null) : null;
   const lastSuite = diag.data?.find((r) => r.test === "full");
-  const summary = lastSuite ? suiteSummary(lastSuite) : null;
+  const verdict = suiteVerdict(lastSuite);
   const canAdd = !d.is_simulated && can(role, "inventory.write") && !!d.system_serial;
 
   // One reason line under the buttons: the most important thing blocking them, if anything.
@@ -211,11 +211,10 @@ function ConnectedDevicePage() {
     })),
     ...(diag.data ?? []).map((r) => {
       const sm = suiteSummary(r);
-      const res = sm
-        ? sm.failed.length
-          ? `${sm.failed.length} failed: ${sm.failed.join(", ")}`
-          : "all passed"
-        : r.outcome;
+      const res =
+        r.test === "full"
+          ? suiteVerdict(r).label + (sm?.failed.length ? ` (${sm.failed.join(", ")})` : "")
+          : r.outcome;
       return {
         at: r.created_at,
         text: `${r.agents?.name ?? "A stick"} ran the ${r.test === "full" ? "test" : `${r.test} test`} · ${res} · ${formatDateTime(r.created_at)}`,
@@ -240,17 +239,11 @@ function ConnectedDevicePage() {
         <div className="flex flex-wrap items-center gap-2">
           <Mono className="text-sm text-muted-foreground">{d.device_code}</Mono>
           <OnlineDot online={online} />
-          {summary ? (
-            summary.failed.length ? (
-              <ToneBadge tone="danger">
-                Test: {summary.failed.length} problem{summary.failed.length === 1 ? "" : "s"}
-              </ToneBadge>
-            ) : (
-              <ToneBadge tone="success">Test: all passed</ToneBadge>
-            )
-          ) : (
-            <ToneBadge tone="neutral">Not tested</ToneBadge>
-          )}
+          <ToneBadge tone={verdict.tone}>
+            {verdict.label === "Not tested"
+              ? verdict.label
+              : `Test: ${verdict.label.toLowerCase()}`}
+          </ToneBadge>
           {d.is_simulated && <SimulatedBadge />}
           {!d.is_simulated && d.hardware_origin === "synthetic" && (
             <span title={d.hardware_origin_reason ?? undefined}>
@@ -341,13 +334,6 @@ function ConnectedDevicePage() {
         </TabsList>
 
         <TabsContent value="report" className="space-y-3">
-          {summary && (
-            <p className="text-sm font-medium text-foreground">
-              {summary.passed} passed
-              {summary.failed.length > 0 &&
-                ` · ${summary.failed.length} failed: ${summary.failed.join(", ")}`}
-            </p>
-          )}
           {diag.data && diag.data.length > 0 ? (
             <DiagnosticResultsCard results={diag.data} />
           ) : (
