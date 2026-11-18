@@ -43,6 +43,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Wordmark } from "@/components/nd/wordmark";
 import { ErrorBlock, LoadingBlock } from "@/components/nd/page";
 import { OrgProvider, useMyMemberships, useOrg } from "@/lib/org-context";
+import { ConnectedPopup } from "@/components/nd/connected-popup";
 import { useSignOut } from "@/lib/session";
 import { can, isPrivileged, ROLE_LABELS, type Capability } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
@@ -321,6 +322,7 @@ function Shell() {
             <PendingInvitations compact />
             <MfaGate role={role} orgName={current.org.name}>
               <Outlet />
+              <ConnectedPopup />
             </MfaGate>
           </div>
         </main>

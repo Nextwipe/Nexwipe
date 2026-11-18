@@ -1,7 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
+import { useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useOrg } from "@/lib/org-context";
-import { needsDbUpdate } from "@/lib/connected-device";
+import { connectedLaptops, needsDbUpdate, type StickRow } from "@/lib/connected-device";
 
 // All reads pass the current org as a filter for UX only. Row-level security is
 // what actually restricts results to organizations the user belongs to.
@@ -283,6 +284,46 @@ export function useConnectedDevices() {
     },
   });
 }
+
+/**
+ * Who is connected right now, for the "Laptop connected" pop-up: polled every 5 s while the tab is
+ * visible, so it selects only the few fields the card shows (no hardware report body). When the
+ * connected set changes it refreshes the full connected-devices list too.
+ */
+export function useConnectedNow() {
+  const { orgId } = useOrg();
+  const qc = useQueryClient();
+  const prev = useRef<string | null>(null);
+  return useQuery({
+    queryKey: ["connected-now", orgId],
+    refetchInterval: 5000,
+    retry: (n, err) => !needsDbUpdate(err) && n < 3,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agent_discoveries")
+        .select(
+          "id, agent_id, device_code, reported_at, last_reported_at, is_simulated, sys:payload->system, agents!inner(name, status, last_heartbeat_at)",
+        )
+        .eq("org_id", orgId)
+        .eq("agents.status", "active")
+        .order("last_reported_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      const rows = data as unknown as ConnectedNowRow[];
+      const ids = connectedLaptops(rows).map((r) => r.id).join(",");
+      if (prev.current !== null && prev.current !== ids)
+        qc.invalidateQueries({ queryKey: ["connected-devices", orgId] });
+      prev.current = ids;
+      return rows;
+    },
+  });
+}
+
+export type ConnectedNowRow = StickRow & {
+  is_simulated: boolean;
+  sys: { manufacturer?: string; model?: string } | null;
+  agents: { name: string; status: string | null; last_heartbeat_at: string | null } | null;
+};
 
 /** Latest station report linked to an inventory device (null for devices entered by hand). */
 export function useDeviceDiscovery(deviceId: string) {
