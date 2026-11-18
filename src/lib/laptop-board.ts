@@ -9,7 +9,13 @@ export type Stage = {
   tone: string;
   planned: string | null;
 };
-export type Tab = { key: string; label: string; tone: string; count: number; planned: string | null };
+export type Tab = {
+  key: string;
+  label: string;
+  tone: string;
+  count: number;
+  planned: string | null;
+};
 
 /** One tab per stage in position order, counting laptops (only mine when `mineUserId` is given). */
 export function boardTabs(

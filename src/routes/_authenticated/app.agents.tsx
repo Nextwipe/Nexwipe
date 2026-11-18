@@ -19,7 +19,7 @@ import { PrepareUsbStick } from "@/components/nd/prepare-usb-stick";
 
 export const Route = createFileRoute("/_authenticated/app/agents")({
   staticData: { sitemap: false },
-  head: () => ({ meta: [{ title: "Agents & stations · NexWipe" }] }),
+  head: () => ({ meta: [{ title: "Full Computer Test · NexWipe" }] }),
   component: AgentsPage,
 });
 
@@ -74,7 +74,7 @@ function AgentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Agents & stations"
+        title="Full Computer Test"
         description="Prepare a NexWipe USB stick, plug it into a laptop and open Start NexWipe: the laptop shows up below. Sticks only read hardware. They never erase or change anything."
         actions={<div className="flex gap-2"><Button variant="ghost" onClick={() => { qc.invalidateQueries({ queryKey: ["agents", orgId] }); qc.invalidateQueries({ queryKey: ["connected-devices", orgId] }); }}><RotateCw /> Refresh</Button>{canManage && <Button onClick={() => setStickOpen(true)}><Usb /> Prepare USB stick</Button>}</div>}
       />

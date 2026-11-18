@@ -17,7 +17,6 @@ import {
   Menu,
   Moon,
   ScrollText,
-  Server,
   Settings,
   ShieldAlert,
   SlidersHorizontal,
@@ -100,6 +99,7 @@ const NAV: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: "/app/setup", label: "Get started", icon: ListChecks, cap: "sites.manage" },
       { to: "/app", label: "Dashboard", icon: LayoutDashboard },
+      { to: "/app/agents", label: "Full Computer Test", icon: Laptop, cap: "agents.view" },
       { to: "/app/inventory", label: "Inventory", icon: Boxes, cap: "inventory.view" },
       { to: "/app/projects", label: "Projects & batches", icon: FolderKanban },
       { to: "/app/clients", label: "Clients", icon: Building, cap: "inventory.view" },
@@ -117,7 +117,6 @@ const NAV: { heading: string; items: NavItem[] }[] = [
     items: [
       { to: "/app/jobs", label: "Jobs", icon: Activity, cap: "jobs.view" },
       { to: "/app/policies", label: "Policies", icon: SlidersHorizontal, cap: "jobs.view" },
-      { to: "/app/agents", label: "Agents & stations", icon: Server, cap: "agents.view" },
       { to: "/app/simulator", label: "Agent simulator", icon: FlaskConical, cap: "simulator.run" },
       { to: "#", label: "Reports", icon: FileText, planned: "Phase 3" },
       { to: "#", label: "Billing & credits", icon: CreditCard, planned: "Phase 4" },

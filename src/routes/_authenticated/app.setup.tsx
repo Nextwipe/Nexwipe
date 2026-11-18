@@ -89,18 +89,15 @@ function Setup() {
         </Step>
         <Step n={4} done={p.device} title="Connect your first device">
           <ul className="mt-2 space-y-3">
-            <Check done={p.station} label="Create a station enrollment token">
-              On <Link to="/app/agents" className="underline underline-offset-4">Agents &amp; stations</Link>, open
-              <span className="font-medium"> USB sticks &amp; stations</span> and choose <span className="font-medium">Enrollment token</span>. It’s shown once and expires.
+            <Check done={p.station} label="Prepare a USB stick">
+              On the <Link to="/app" className="underline underline-offset-4">Dashboard</Link>, choose
+              <span className="font-medium"> Prepare USB stick</span> and put the files on any USB stick. Nothing on the
+              stick is erased.
             </Check>
-            <Check done={p.station} label="Boot a laptop from the read-only station USB">
-              Get the station USB image and instructions from{" "}
-              <Link to="/support" className="underline underline-offset-4">support</Link>. Writing the image erases the USB
-              stick; the station itself only reads the laptop’s drives and never erases them. Physical laptop
-              compatibility is still being verified.
-            </Check>
-            <Check done={p.station} label="Enter the token on the station screen">
-              The station appears on Agents &amp; stations and reports the laptop’s hardware.
+            <Check done={p.station} label="Start NexWipe on a laptop">
+              Plug the stick into a laptop that starts Windows and double-click <span className="font-medium">Start
+              NexWipe</span>. The laptop appears on the Dashboard: press <span className="font-medium">Accept</span> to
+              start testing it. It only reads hardware details and never erases anything.
             </Check>
             <Check done={p.device} label="Add the device to inventory">
               Add it from the station report, or receive it by hand on{" "}

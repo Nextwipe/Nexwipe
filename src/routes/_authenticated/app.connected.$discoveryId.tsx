@@ -121,7 +121,7 @@ function ConnectedDevicePage() {
         description="It may belong to another organization."
         action={
           <Button asChild variant="outline">
-            <Link to="/app/agents">Back to Agents & stations</Link>
+            <Link to="/app/agents">Back to Full Computer Test</Link>
           </Button>
         }
       />
@@ -228,7 +228,7 @@ function ConnectedDevicePage() {
         to="/app/agents"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="size-4" /> Agents & stations
+        <ArrowLeft className="size-4" /> Full Computer Test
       </Link>
 
       <div className="space-y-2">

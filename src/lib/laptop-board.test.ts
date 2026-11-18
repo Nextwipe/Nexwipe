@@ -22,7 +22,11 @@ describe("boardTabs", () => {
   });
 
   it("Mine counts only laptops I claimed (pending ones have no claimer)", () => {
-    const tabs = boardTabs(stages, [lap("testing", "me"), lap("testing", "you"), lap("pending")], "me");
+    const tabs = boardTabs(
+      stages,
+      [lap("testing", "me"), lap("testing", "you"), lap("pending")],
+      "me",
+    );
     expect(tabs.find((t) => t.key === "testing")!.count).toBe(1);
     expect(tabs.find((t) => t.key === "pending")!.count).toBe(0);
   });
@@ -42,6 +46,11 @@ describe("defaultTab", () => {
 
 describe("needsDbUpdate for the laptop tables", () => {
   it("recognises PostgREST's missing-table error", () => {
-    expect(needsDbUpdate({ code: "PGRST205", message: "Could not find the table 'public.laptops' in the schema cache" })).toBe(true);
+    expect(
+      needsDbUpdate({
+        code: "PGRST205",
+        message: "Could not find the table 'public.laptops' in the schema cache",
+      }),
+    ).toBe(true);
   });
 });

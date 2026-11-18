@@ -7,7 +7,10 @@ import {
   CircleHelp,
   FolderKanban,
   Inbox,
+  Lightbulb,
   ShieldAlert,
+  Usb,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -17,6 +20,8 @@ import { ALL, FilterSelect } from "@/components/nd/filter-select";
 import { PROJECT_STATUS, StatusBadge } from "@/components/nd/status-badge";
 import { useOrg } from "@/lib/org-context";
 import { AvailabilityPanel } from "@/components/nd/availability-panel";
+import { LaptopBoard } from "@/components/nd/laptop-board";
+import { PrepareUsbStick } from "@/components/nd/prepare-usb-stick";
 import { can } from "@/lib/permissions";
 import { formatDateTime, memberName, useClients, useMembers, useProjects, useSites } from "@/lib/queries";
 
@@ -31,6 +36,47 @@ function Dashboard() {
   return <StaffDashboard />;
 }
 
+const HINT_KEY = "nexwipe.hint.board";
+
+/** One-time hint for new users: where to start. Hidden for good once closed (per browser). */
+function FirstVisitHint() {
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return localStorage.getItem(HINT_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (hidden) return null;
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-info/30 bg-info-soft p-4 text-sm">
+      <Lightbulb className="mt-0.5 size-5 shrink-0 text-info" aria-hidden />
+      <p className="flex-1 text-foreground">
+        <span className="font-semibold">New here?</span> Prepare a USB stick, plug it into a laptop
+        and double-click <span className="font-medium">Start NexWipe</span>. The laptop appears below:
+        press <span className="font-medium">Accept</span> to start testing it. No laptop at hand? Use
+        <span className="font-medium"> Try a virtual laptop</span>.
+      </p>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        aria-label="Close hint"
+        onClick={() => {
+          setHidden(true);
+          try {
+            localStorage.setItem(HINT_KEY, "1");
+          } catch {
+            /* private window: hint comes back next visit */
+          }
+        }}
+      >
+        <X />
+      </Button>
+    </div>
+  );
+}
+
 function StaffDashboard() {
   const { orgId, role, current } = useOrg();
   const sites = useSites();
@@ -43,6 +89,7 @@ function StaffDashboard() {
   const [tech, setTech] = useState(ALL);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [stickOpen, setStickOpen] = useState(false);
 
   const filters = { site, client, project, tech, from, to };
   const counts = useQuery({
@@ -95,17 +142,28 @@ function StaffDashboard() {
     <div className="space-y-6">
       <PageHeader
         title="Dashboard"
-        description={`Operations overview for ${current.org.name}.`}
+        description={`Every laptop a NexWipe stick has reported for ${current.org.name}, by stage.`}
         actions={
-          can(role, "inventory.write") && (
-            <Button asChild>
-              <Link to="/app/inventory" search={{ intake: true }}>
-                <Inbox /> Receive devices
-              </Link>
-            </Button>
-          )
+          <div className="flex flex-wrap gap-2">
+            {can(role, "agents.manage") && (
+              <Button onClick={() => setStickOpen(true)}>
+                <Usb /> Prepare USB stick
+              </Button>
+            )}
+            {can(role, "inventory.write") && (
+              <Button asChild variant="outline">
+                <Link to="/app/inventory" search={{ intake: true }}>
+                  <Inbox /> Add by hand
+                </Link>
+              </Button>
+            )}
+          </div>
         }
       />
+      {can(role, "agents.manage") && <PrepareUsbStick open={stickOpen} onOpenChange={setStickOpen} />}
+
+      <FirstVisitHint />
+      <LaptopBoard />
 
       <AvailabilityPanel />
 

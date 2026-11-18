@@ -10,8 +10,8 @@ const AVAILABLE: { label: string; note?: string; to?: string }[] = [
   { label: "Sites, clients and projects", to: "/app/sites" },
   { label: "Device inventory", note: "Receiving, CSV import/export, custody history and audit log.", to: "/app/inventory" },
   {
-    label: "Read-only station enrollment",
-    note: "A station USB reports a laptop’s hardware to inventory. It never erases drives. Physical laptop compatibility is still being verified.",
+    label: "Full Computer Test (read-only)",
+    note: "A NexWipe USB stick reports a laptop and runs its hardware test; the laptop is accepted by one technician and moves through stages. It never erases drives. Physical laptop compatibility is still being verified.",
     to: "/app/agents",
   },
   {
