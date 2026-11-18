@@ -69,6 +69,17 @@ function obj<T>(v: unknown): T {
   return (v && typeof v === "object" ? v : {}) as T;
 }
 
+/** Passed count and failed part names of a complete-suite result; null for other tests. */
+export function suiteSummary(r: Pick<DiagnosticResult, "test" | "result">): { passed: number; failed: string[] } | null {
+  if (r.test !== "full") return null;
+  const tests = obj<{ tests?: Record<string, Part> }>(r.result).tests ?? {};
+  const parts = PART_LABEL.filter(([k]) => tests[k]);
+  return {
+    passed: parts.filter(([k]) => tests[k]!.outcome === "pass").length,
+    failed: parts.filter(([k]) => tests[k]!.outcome === "fail").map(([, label]) => label),
+  };
+}
+
 /** The keyboard part of a result: the whole result for "keyboard", result.tests.keyboard for "full". */
 function keyboardOf(r: DiagnosticResult): KeyboardPayload | null {
   if (r.test === "keyboard") return obj<KeyboardPayload>(r.result);

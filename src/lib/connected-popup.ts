@@ -14,7 +14,11 @@ export function pruneDismissals(d: Dismissals, connectedIds: string[], now: numb
   return keep.length === Object.keys(d).length ? d : Object.fromEntries(keep);
 }
 
-export function popupQueue<T extends { id: string }>(connected: T[], d: Dismissals, hideId?: string): T[] {
+export function popupQueue<T extends { id: string }>(
+  connected: T[],
+  d: Dismissals,
+  hideId?: string,
+): T[] {
   return connected.filter((c) => !(c.id in d) && c.id !== hideId);
 }
 

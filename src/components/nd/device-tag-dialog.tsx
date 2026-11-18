@@ -157,11 +157,10 @@ export function DeviceTagDialog({ fields, open, onOpenChange }: { fields: TagFie
   );
 }
 
-/** Grade picker + Print tag, shared by the connected-device page and the inventory page. */
-export function GradeAndTag({ deviceId, grade, tag, onSaved }: { deviceId: string; grade: string | null; tag: TagFields | null; onSaved: () => void }) {
+/** Grade picker. Saving is recorded in the audit history by the database. */
+export function GradeSelect({ deviceId, grade, onSaved, triggerClassName = "h-8 w-48" }: { deviceId: string; grade: string | null; onSaved: () => void; triggerClassName?: string }) {
   const { orgId, role } = useOrg();
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
 
   async function setGrade(g: string) {
     setBusy(true);
@@ -173,11 +172,19 @@ export function GradeAndTag({ deviceId, grade, tag, onSaved }: { deviceId: strin
   }
 
   return (
+    <Select value={grade ?? ""} onValueChange={setGrade} disabled={!can(role, "inventory.write") || busy}>
+      <SelectTrigger className={triggerClassName} aria-label="Grade"><SelectValue placeholder="Grade: not set" /></SelectTrigger>
+      <SelectContent>{GRADES.map((g) => <SelectItem key={g.value} value={g.value}>Grade {g.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
+}
+
+/** Grade picker + Print tag, used by the inventory page. */
+export function GradeAndTag({ deviceId, grade, tag, onSaved }: { deviceId: string; grade: string | null; tag: TagFields | null; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <Select value={grade ?? ""} onValueChange={setGrade} disabled={!can(role, "inventory.write") || busy}>
-        <SelectTrigger className="h-8 w-48" aria-label="Grade"><SelectValue placeholder="Grade: not set" /></SelectTrigger>
-        <SelectContent>{GRADES.map((g) => <SelectItem key={g.value} value={g.value}>Grade {g.label}</SelectItem>)}</SelectContent>
-      </Select>
+      <GradeSelect deviceId={deviceId} grade={grade} onSaved={onSaved} />
       {tag && <Button size="sm" variant="outline" onClick={() => setOpen(true)}><Tag /> Print tag</Button>}
       {tag && <DeviceTagDialog fields={tag} open={open} onOpenChange={setOpen} />}
     </span>

@@ -7,26 +7,18 @@ import {
   DatabaseZap,
   Eraser,
   FlaskConical,
-  ClipboardCheck,
   Laptop,
-  Plus,
-  Power,
+  Package,
+  Play,
   RefreshCw,
-  RotateCw,
+  Star,
+  Tag,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState, ErrorBlock, LoadingBlock, Mono, errorMessage } from "@/components/nd/page";
 import { SimulatedBadge, ToneBadge } from "@/components/nd/status-badge";
 import { HardwareOriginBadge } from "@/components/nd/hardware-origin-badge";
@@ -34,8 +26,14 @@ import { DeviceBarcode, OnlineDot, SectionCard } from "@/components/nd/connected
 import { AddToInventoryDialog, type AddTarget } from "@/components/nd/station-discoveries";
 import { useOrg } from "@/lib/org-context";
 import { can } from "@/lib/permissions";
-import { formatDateTime, useConnectedDevice, useDiagnosticResults } from "@/lib/queries";
-import { DiagnosticResultsCard } from "@/components/nd/diagnostics";
+import {
+  formatDateTime,
+  useConnectedDevice,
+  useDiagnosticResults,
+  useLaptopHistory,
+  useStickDiscoveries,
+} from "@/lib/queries";
+import { DiagnosticResultsCard, suiteSummary } from "@/components/nd/diagnostics";
 import {
   canRebootToUsb,
   helperRunsSuite,
@@ -45,33 +43,53 @@ import {
   deviceSummary,
   isOnline,
   needsDbUpdate,
-  stationContext,
+  stickPosition,
 } from "@/lib/connected-device";
 import { reviewFlags } from "@/lib/discovery";
 import { tagFields } from "@/lib/device-tag";
-import { GradeAndTag } from "@/components/nd/device-tag-dialog";
+import { DeviceTagDialog, GradeSelect } from "@/components/nd/device-tag-dialog";
 
 export const Route = createFileRoute("/_authenticated/app/connected/$discoveryId")({
   staticData: { sitemap: false },
   component: ConnectedDevicePage,
 });
 
-const REBOOT_STATUS: Record<string, string> = {
-  requested: "Waiting for the laptop to pick up the request…",
-  delivered: "Laptop received the request",
-  done: "Laptop is restarting into the NexWipe stick",
-  failed: "Laptop could not restart into the stick",
-  expired: "Request expired: the laptop did not check in within 2 minutes",
+const DIAGNOSTIC_STATUS: Record<string, string> = {
+  requested: "Waiting for the laptop to pick up the test…",
+  delivered: "Test sent: confirm with Y on the laptop, then follow the test window there",
+  failed: "The test did not run on the laptop",
+  expired: "The laptop did not pick up the test within 2 minutes",
 };
 
-const DIAGNOSTIC_STATUS: Record<string, string> = {
-  requested: "Waiting for the laptop to pick up the test suite…",
-  delivered:
-    "Laptop received it: the technician confirms, then follows the tests in the test window",
-  done: "Test suite finished — see the result below",
-  failed: "Test suite did not run at the laptop",
-  expired: "Request expired: the laptop did not check in within 2 minutes",
-};
+/** One big action button with an optional small line under the label. */
+function Tile({
+  icon: Icon,
+  label,
+  sub,
+  primary,
+  disabled,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  sub?: string | undefined;
+  primary?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <Button
+      variant={primary ? "default" : "outline"}
+      disabled={disabled}
+      onClick={onClick}
+      className="h-auto min-h-24 flex-col gap-2 whitespace-normal py-4 text-base font-semibold [&_svg]:size-6"
+    >
+      <Icon aria-hidden />
+      {label}
+      {sub && <span className="text-xs font-normal opacity-80">{sub}</span>}
+    </Button>
+  );
+}
 
 function ConnectedDevicePage() {
   const { discoveryId } = Route.useParams();
@@ -79,9 +97,11 @@ function ConnectedDevicePage() {
   const qc = useQueryClient();
   const q = useConnectedDevice(discoveryId);
   const diag = useDiagnosticResults({ deviceCode: q.data?.device_code ?? null });
+  const history = useLaptopHistory(q.data?.device_code ?? null);
+  const stick = useStickDiscoveries(q.data?.agent_id ?? null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirmReboot, setConfirmReboot] = useState(false);
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null);
+  const [tagOpen, setTagOpen] = useState(false);
 
   if (q.isLoading) return <LoadingBlock />;
   if (needsDbUpdate(q.error))
@@ -112,49 +132,96 @@ function ConnectedDevicePage() {
   const s = deviceSummary(d.payload);
   const sections = deviceSections(d.payload);
   const flags = reviewFlags(d.review_flags);
-  const online = ag?.status === "active" && isOnline(ag?.last_heartbeat_at);
+  // Until the stick's laptops have loaded, assume it is still here (the server re-checks anyway).
+  const position = stick.data ? stickPosition(stick.data, d.id) : "current";
+  const stickOnline = ag?.status === "active" && isOnline(ag?.last_heartbeat_at);
+  const online = stickOnline && position !== "moved";
   const mayAct = can(role, "stations.act") && ag?.status === "active";
-  const rebootPending = isCommandPending(ag?.reboot_status, ag?.reboot_status_at);
   const diagPending = isCommandPending(ag?.diagnostic_status, ag?.diagnostic_status_at);
   // A Windows laptop needs helper 0.6.2+ for the suite; older stick files restart or ignore it.
   const oldHelper = canRebootToUsb(ag?.platform) && !helperRunsSuite(ag?.agent_version);
   const diagStale =
     (ag?.diagnostic_status === "requested" || ag?.diagnostic_status === "delivered") &&
     !diagPending;
+  const tag = d.device_id ? tagFields(d.payload, d.device_code, d.devices?.grade ?? null) : null;
+  const lastSuite = diag.data?.find((r) => r.test === "full");
+  const summary = lastSuite ? suiteSummary(lastSuite) : null;
+  const canAdd = !d.is_simulated && can(role, "inventory.write") && !!d.system_serial;
 
-  async function act(action: "rescan" | "reboot_to_usb") {
-    setBusy(action);
+  // One reason line under the buttons: the most important thing blocking them, if anything.
+  const reason =
+    ag?.status !== "active"
+      ? "The stick that reported this laptop has been revoked, so the buttons are off."
+      : position === "moved"
+        ? "This stick is now on another laptop. Start NexWipe on this laptop again to test it."
+        : position === "misfiled"
+          ? "Results from this stick would be filed under another laptop. Use a different stick for this laptop."
+          : !stickOnline
+            ? "Not connected. Plug in a NexWipe stick and open Start NexWipe on this laptop."
+            : oldHelper
+              ? `This stick has an old NexWipe (${ag?.agent_version ?? "unknown"}); the test needs ${SUITE_MIN_HELPER} or newer. Prepare the stick again.`
+              : diagStale
+                ? "The laptop got the test but has not answered (window closed or test still open). You can send it again."
+                : ag?.diagnostic_status && ag.diagnostic_status !== "done"
+                  ? (DIAGNOSTIC_STATUS[ag.diagnostic_status] ?? null)
+                  : null;
+
+  async function rescan() {
+    setBusy("rescan");
     const { error } = await supabase.rpc("request_station_action", {
       _agent: d.agent_id,
-      _action: action,
+      _action: "rescan",
     });
     setBusy(null);
-    setConfirmReboot(false);
     if (error) {
       toast.error(errorMessage(error));
       return;
     }
-    toast.success(
-      action === "rescan"
-        ? "Rescan requested. The laptop reports again on its next check-in."
-        : "Reboot requested. The laptop shows a countdown that can be cancelled at the laptop.",
-    );
+    toast.success("Rescan requested. The laptop reports again in a few seconds.");
     qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
   }
 
-  async function runDiagnostic(test: "full") {
-    setBusy(test);
-    const { error } = await supabase.rpc("request_diagnostic", { _agent: d.agent_id, _test: test });
+  async function runTest() {
+    setBusy("full");
+    const { error } = await supabase.rpc("request_diagnostic", {
+      _agent: d.agent_id,
+      _test: "full",
+    });
     setBusy(null);
     if (error) {
       toast.error(errorMessage(error));
       return;
     }
-    toast.success(
-      "Complete test suite sent. The laptop lists the tests and permissions and asks the technician to confirm with Y.",
-    );
+    toast.success("Test sent. On the laptop, press Y to start, then follow the test window.");
     qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
   }
+
+  const refreshDevice = () => {
+    qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
+    qc.invalidateQueries({ queryKey: ["device", d.device_id] });
+  };
+  const canStickAct = mayAct && stickOnline && busy === null;
+
+  // History: which stick did what, newest first.
+  type Event = { at: string; text: string };
+  const events: Event[] = [
+    ...(history.data ?? []).map((h) => ({
+      at: h.last_reported_at ?? h.reported_at ?? "",
+      text: `${h.agents?.name ?? "A stick"} reported this laptop · first ${formatDateTime(h.reported_at)} · last ${formatDateTime(h.last_reported_at)} · ${h.report_count} report${h.report_count === 1 ? "" : "s"}`,
+    })),
+    ...(diag.data ?? []).map((r) => {
+      const sm = suiteSummary(r);
+      const res = sm
+        ? sm.failed.length
+          ? `${sm.failed.length} failed: ${sm.failed.join(", ")}`
+          : "all passed"
+        : r.outcome;
+      return {
+        at: r.created_at,
+        text: `${r.agents?.name ?? "A stick"} ran the ${r.test === "full" ? "test" : `${r.test} test`} · ${res} · ${formatDateTime(r.created_at)}`,
+      };
+    }),
+  ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 
   return (
     <div className="max-w-6xl space-y-5">
@@ -165,226 +232,187 @@ function ConnectedDevicePage() {
         <ArrowLeft className="size-4" /> Agents & stations
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
-        <div className="min-w-0 space-y-2">
+      <div className="space-y-2">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
+          <Laptop className="size-6 shrink-0 text-muted-foreground" aria-hidden />
+          {s.title}
+        </h1>
+        <div className="flex flex-wrap items-center gap-2">
           <Mono className="text-sm text-muted-foreground">{d.device_code}</Mono>
-          <h1 className="text-2xl font-semibold text-foreground">{s.title}</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <OnlineDot online={online} />
-            {d.is_simulated && <SimulatedBadge />}
-            {d.is_read_only_test && <ToneBadge tone="info">Read-only station</ToneBadge>}
-            {!d.is_simulated && d.hardware_origin === "synthetic" && (
-              <span title={d.hardware_origin_reason ?? undefined}>
-                <ToneBadge tone="warning" icon={FlaskConical}>
-                  Synthetic test hardware
-                </ToneBadge>
-              </span>
-            )}
-            {flags.length > 0 && (
-              <ToneBadge tone="warning" icon={AlertTriangle}>
-                Needs review
+          <OnlineDot online={online} />
+          {summary ? (
+            summary.failed.length ? (
+              <ToneBadge tone="danger">
+                Test: {summary.failed.length} problem{summary.failed.length === 1 ? "" : "s"}
               </ToneBadge>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {stationContext(ag?.platform)} · {ag?.name ?? "station"} · first report{" "}
-            {formatDateTime(d.reported_at)} · last {formatDateTime(d.last_reported_at)}
-            {d.report_count > 1 ? ` · ${d.report_count} reports` : ""}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-1 h-6 px-2 text-xs"
-              disabled={q.isFetching}
-              title="Show the latest data NexWipe cloud has. Does not ask the laptop to rescan."
-              onClick={() => q.refetch()}
-            >
-              <RotateCw /> Refresh
-            </Button>
-          </p>
-        </div>
-        <div className="space-y-1 text-center">
-          <DeviceBarcode code={d.device_code} />
-          <p className="text-xs text-muted-foreground">Unique NexWipe device code</p>
+            ) : (
+              <ToneBadge tone="success">Test: all passed</ToneBadge>
+            )
+          ) : (
+            <ToneBadge tone="neutral">Not tested</ToneBadge>
+          )}
+          {d.is_simulated && <SimulatedBadge />}
+          {!d.is_simulated && d.hardware_origin === "synthetic" && (
+            <span title={d.hardware_origin_reason ?? undefined}>
+              <ToneBadge tone="warning" icon={FlaskConical}>
+                Synthetic test hardware
+              </ToneBadge>
+            </span>
+          )}
+          {flags.length > 0 && (
+            <ToneBadge tone="warning" icon={AlertTriangle}>
+              Needs review
+            </ToneBadge>
+          )}
         </div>
       </div>
 
-      <section
-        aria-labelledby="actions-h"
-        className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-card"
-      >
-        <h2 id="actions-h" className="font-medium text-foreground">
-          Actions
-        </h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            disabled={!mayAct || busy !== null}
-            onClick={() => act("rescan")}
-          >
-            <RefreshCw /> Rescan
-          </Button>
-          {canRebootToUsb(ag?.platform) && (
+      <section aria-label="Actions" className="space-y-2">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <Tile
+            icon={Play}
+            label="Run test"
+            primary
+            disabled={!canStickAct || position !== "current" || diagPending || oldHelper}
+            onClick={runTest}
+          />
+          {d.device_id ? (
             <Button
+              asChild
               variant="outline"
-              disabled={!mayAct || !online || rebootPending || busy !== null}
-              onClick={() => setConfirmReboot(true)}
+              className="h-auto min-h-24 flex-col gap-2 whitespace-normal py-4 text-base font-semibold [&_svg]:size-6"
             >
-              <Power /> Reboot into NexWipe
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            disabled={!mayAct || !online || diagPending || oldHelper || busy !== null}
-            onClick={() => runDiagnostic("full")}
-          >
-            <ClipboardCheck /> Run complete test suite
-          </Button>
-          <Button variant="outline" disabled title="Planned for v2">
-            <Eraser /> Start wipe <ToneBadge tone="neutral">Planned · v2</ToneBadge>
-          </Button>
-          <span className="ml-auto">
-            {d.device_id ? (
-              <span className="inline-flex items-center gap-2 text-sm">
-                In inventory as{" "}
-                <Link
-                  to="/app/inventory/$deviceId"
-                  params={{ deviceId: d.device_id }}
-                  className="font-mono hover:underline"
-                >
+              <Link to="/app/inventory/$deviceId" params={{ deviceId: d.device_id }}>
+                <Package aria-hidden />
+                In inventory
+                <span className="font-mono text-xs font-normal opacity-80">
                   {d.devices?.asset_tag}
-                </Link>
-                {d.devices && <HardwareOriginBadge record={d.devices} />}
-                <GradeAndTag
-                  deviceId={d.device_id}
-                  grade={d.devices?.grade ?? null}
-                  tag={tagFields(d.payload, d.device_code, d.devices?.grade ?? null)}
-                  onSaved={() => {
-                    qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
-                    qc.invalidateQueries({ queryKey: ["device", d.device_id] });
-                  }}
-                />
-              </span>
-            ) : !d.is_simulated && can(role, "inventory.write") && d.system_serial ? (
-              <span className="inline-flex flex-col items-end gap-1">
-                <Button
-                  size="sm"
-                  disabled={!online}
-                  onClick={() =>
-                    setAddTarget({ id: d.id, serial: d.system_serial!, code: d.device_code })
-                  }
-                >
-                  <Plus /> Add to inventory
-                </Button>
-                {!online && (
-                  <span className="text-xs text-muted-foreground">
-                    Start NexWipe on the laptop first: adding re-scans it to confirm.
-                  </span>
-                )}
-              </span>
-            ) : (
-              <ToneBadge tone="neutral">Not in inventory</ToneBadge>
-            )}
-          </span>
+                </span>
+              </Link>
+            </Button>
+          ) : (
+            <Tile
+              icon={Package}
+              label="Add to inventory"
+              sub={!canAdd ? "Not available" : !online ? "Connect first" : undefined}
+              disabled={!canAdd || !online}
+              onClick={() =>
+                setAddTarget({ id: d.id, serial: d.system_serial!, code: d.device_code })
+              }
+            />
+          )}
+          {d.device_id ? (
+            <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-input p-3 text-base font-semibold">
+              <Star className="size-6" aria-hidden />
+              <GradeSelect
+                deviceId={d.device_id}
+                grade={d.devices?.grade ?? null}
+                onSaved={refreshDevice}
+                triggerClassName="h-9 w-full"
+              />
+            </div>
+          ) : (
+            <Tile icon={Star} label="Set grade" sub="Add to inventory first" disabled />
+          )}
+          <Tile
+            icon={Tag}
+            label="Print tag"
+            sub={tag ? undefined : "Add to inventory first"}
+            disabled={!tag}
+            onClick={() => setTagOpen(true)}
+          />
+          <Tile
+            icon={RefreshCw}
+            label="Rescan"
+            disabled={!canStickAct || position === "moved"}
+            onClick={rescan}
+          />
+          <Tile icon={Eraser} label="Erase" sub="Planned" disabled />
         </div>
-        {oldHelper && (
-          <p className="text-sm text-warning">
-            This laptop runs NexWipe for Windows {ag?.agent_version ?? "(unknown version)"}; the
-            test suite needs {SUITE_MIN_HELPER} or newer. Prepare the USB stick again (Agents &amp;
-            stations → Prepare USB stick), copy all 4 files to it, and start NexWipe again.
-          </p>
-        )}
-        {ag?.reboot_status && (
-          <p
-            className={`text-sm ${ag.reboot_status === "failed" || ag.reboot_status === "expired" ? "text-warning" : "text-muted-foreground"}`}
-          >
-            Reboot into NexWipe: {REBOOT_STATUS[ag.reboot_status] ?? ag.reboot_status}
-            {ag.reboot_detail ? ` (${ag.reboot_detail})` : ""} ·{" "}
-            {formatDateTime(ag.reboot_status_at)}
-          </p>
-        )}
-        {ag?.diagnostic_status && (
-          <p
-            className={`text-sm ${ag.diagnostic_status === "failed" || ag.diagnostic_status === "expired" ? "text-warning" : "text-muted-foreground"}`}
-          >
-            Test suite:{" "}
-            {diagStale
-              ? "The laptop got the request but has not answered (window closed or test still open). You can send it again."
-              : (DIAGNOSTIC_STATUS[ag.diagnostic_status] ?? ag.diagnostic_status)}
-            {ag.diagnostic_detail ? ` (${ag.diagnostic_detail})` : ""} ·{" "}
-            {formatDateTime(ag.diagnostic_status_at)}
-          </p>
-        )}
-        {!canRebootToUsb(ag?.platform) && (
-          <p className="text-xs text-muted-foreground">
-            This laptop is already running from the NexWipe stick, so there is nothing to reboot
-            into.
-          </p>
-        )}
-        {ag?.status !== "active" && (
-          <p className="text-xs text-warning">
-            The station that reported this laptop has been revoked; actions are unavailable.
-          </p>
-        )}
+        {reason && <p className="text-sm text-muted-foreground">{reason}</p>}
       </section>
 
-      {flags.length > 0 && (
-        <section className="rounded-lg border border-warning/40 bg-warning-soft p-4 text-sm">
-          <h2 className="mb-1 font-medium text-foreground">Needs review</h2>
-          <ul className="space-y-0.5 text-warning">
-            {flags.map((f, i) => (
-              <li key={`${f.code}-${i}`}>
-                {f.label}
-                {f.target ? `: ${f.target}` : ""}
-                {f.detail ? ` (${f.detail})` : ""}
-              </li>
+      <Tabs defaultValue="report">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="report">Test report</TabsTrigger>
+          <TabsTrigger value="hardware">Hardware</TabsTrigger>
+          <TabsTrigger value="barcode">Barcode</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="report" className="space-y-3">
+          {summary && (
+            <p className="text-sm font-medium text-foreground">
+              {summary.passed} passed
+              {summary.failed.length > 0 &&
+                ` · ${summary.failed.length} failed: ${summary.failed.join(", ")}`}
+            </p>
+          )}
+          {diag.data && diag.data.length > 0 ? (
+            <DiagnosticResultsCard results={diag.data} />
+          ) : (
+            <p className="text-sm text-muted-foreground">Not tested yet. Press Run test.</p>
+          )}
+        </TabsContent>
+
+        <TabsContent value="hardware" className="space-y-4">
+          {flags.length > 0 && (
+            <section className="rounded-lg border border-warning/40 bg-warning-soft p-4 text-sm">
+              <h2 className="mb-1 font-medium text-foreground">Needs review</h2>
+              <ul className="space-y-0.5 text-warning">
+                {flags.map((f, i) => (
+                  <li key={`${f.code}-${i}`}>
+                    {f.label}
+                    {f.target ? `: ${f.target}` : ""}
+                    {f.detail ? ` (${f.detail})` : ""}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {d.device_id && d.devices && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              Inventory record: <HardwareOriginBadge record={d.devices} />
+            </p>
+          )}
+          <div className="grid gap-4 md:grid-cols-2">
+            {sections.map((sec) => (
+              <SectionCard key={sec.title} section={sec} />
             ))}
-          </ul>
-        </section>
-      )}
+          </div>
+        </TabsContent>
 
-      <DiagnosticResultsCard results={diag.data} />
+        <TabsContent value="barcode">
+          <div className="inline-block space-y-1 text-center">
+            <DeviceBarcode code={d.device_code} />
+            <p className="text-xs text-muted-foreground">Unique NexWipe device code</p>
+          </div>
+        </TabsContent>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {sections.map((sec) => (
-          <SectionCard key={sec.title} section={sec} />
-        ))}
-      </div>
+        <TabsContent value="history" className="space-y-3">
+          {events.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nothing recorded yet.</p>
+          ) : (
+            <ul className="divide-y divide-border rounded-lg border border-border bg-card text-sm">
+              {events.map((e, i) => (
+                <li key={i} className="px-4 py-2.5 text-foreground">
+                  {e.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          <details className="rounded-lg border border-border bg-card p-4 text-sm">
+            <summary className="cursor-pointer font-medium text-foreground">
+              Technical details
+            </summary>
+            <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
+              {JSON.stringify(d.payload, null, 2)}
+            </pre>
+          </details>
+        </TabsContent>
+      </Tabs>
 
-      <details className="rounded-lg border border-border bg-card p-4 text-sm">
-        <summary className="cursor-pointer font-medium text-foreground">
-          Raw report (as sent by the station)
-        </summary>
-        <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-muted-foreground">
-          {JSON.stringify(d.payload, null, 2)}
-        </pre>
-      </details>
-
-      <AlertDialog open={confirmReboot} onOpenChange={setConfirmReboot}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reboot this laptop into the NexWipe stick?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {s.title}
-              {d.system_serial ? ` (S/N ${d.system_serial})` : ""} will restart after a countdown on
-              its screen, and boot once from the NexWipe stick. Unsaved work on the laptop is lost.
-              Nothing is erased: the stick only reads hardware details. Someone at the laptop can
-              cancel during the countdown.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                act("reboot_to_usb");
-              }}
-              disabled={busy !== null}
-            >
-              Reboot into NexWipe
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {tag && <DeviceTagDialog fields={tag} open={tagOpen} onOpenChange={setTagOpen} />}
       <AddToInventoryDialog target={addTarget} onClose={() => setAddTarget(null)} />
     </div>
   );

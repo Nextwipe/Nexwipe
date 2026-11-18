@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DISMISS_MAX_MS, loadDismissals, popupQueue, pruneDismissals, saveDismissals } from "./connected-popup";
+import {
+  DISMISS_MAX_MS,
+  loadDismissals,
+  popupQueue,
+  pruneDismissals,
+  saveDismissals,
+} from "./connected-popup";
 
 const now = Date.parse("2026-11-18T10:00:00Z");
 const A = { id: "A" },
@@ -47,7 +53,10 @@ describe("pop-up dismissals", () => {
 
   it("round-trips through storage and ignores bad JSON", () => {
     const store: Record<string, string> = {};
-    vi.stubGlobal("localStorage", { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => (store[k] = v) });
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store[k] ?? null,
+      setItem: (k: string, v: string) => (store[k] = v),
+    });
     saveDismissals({ A: now });
     expect(loadDismissals()).toEqual({ A: now });
     store["nexwipe.popup.dismissed"] = "{bad";

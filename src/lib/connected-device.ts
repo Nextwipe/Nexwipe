@@ -161,7 +161,10 @@ export function stickPosition(
   discoveryId: string,
 ): "current" | "moved" | "misfiled" {
   const top = (k: "reported_at" | "last_reported_at") =>
-    stickRows.reduce<(typeof stickRows)[number] | null>((m, r) => (!m || ms(r[k]) > ms(m[k]) ? r : m), null)?.id;
+    stickRows.reduce<(typeof stickRows)[number] | null>(
+      (m, r) => (!m || ms(r[k]) > ms(m[k]) ? r : m),
+      null,
+    )?.id;
   if (top("last_reported_at") !== discoveryId) return "moved";
   return top("reported_at") === discoveryId ? "current" : "misfiled";
 }

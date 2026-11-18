@@ -265,7 +265,7 @@ export function useChromebookEvents(recordId: string) {
 const CONNECTED_COLUMNS =
   "id, agent_id, device_id, device_code, system_serial, payload, is_simulated, is_read_only_test, reported_at, last_reported_at, report_count, review_flags, hardware_origin, hardware_origin_reason, agents(name, platform, status, agent_version, last_heartbeat_at, reboot_status, reboot_detail, reboot_status_at, diagnostic_status, diagnostic_test, diagnostic_detail, diagnostic_status_at), devices(asset_tag, grade, hardware_verified, hardware_origin, source)";
 
-const DIAGNOSTIC_COLUMNS = "id, test, outcome, result, detail, is_simulated, created_at";
+const DIAGNOSTIC_COLUMNS = "id, test, outcome, result, detail, is_simulated, created_at, agent_id, agents(name)";
 
 export function useConnectedDevices() {
   const { orgId } = useOrg();
@@ -358,6 +358,44 @@ export function useConnectedDevice(discoveryId: string) {
         .eq("org_id", orgId)
         .eq("id", discoveryId)
         .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** Every stick that reported this laptop (History tab: which stick did what). */
+export function useLaptopHistory(deviceCode: string | null) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: Boolean(deviceCode),
+    queryKey: ["laptop-history", orgId, deviceCode],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agent_discoveries")
+        .select("id, reported_at, last_reported_at, report_count, agents(name)")
+        .eq("org_id", orgId)
+        .eq("device_code", deviceCode!)
+        .order("last_reported_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** Every laptop one stick reported, to tell whether it is still on a given laptop (stickPosition). */
+export function useStickDiscoveries(agentId: string | null) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: Boolean(agentId),
+    queryKey: ["stick-discoveries", orgId, agentId],
+    refetchInterval: 5000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agent_discoveries")
+        .select("id, reported_at, last_reported_at")
+        .eq("org_id", orgId)
+        .eq("agent_id", agentId!);
       if (error) throw error;
       return data;
     },

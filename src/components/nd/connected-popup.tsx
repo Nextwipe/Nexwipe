@@ -35,7 +35,11 @@ function ConnectedPopupCard() {
   useEffect(() => {
     if (!q.data) return;
     setDismissed((d) => {
-      const next = pruneDismissals(d, connected.map((c) => c.id), Date.now());
+      const next = pruneDismissals(
+        d,
+        connected.map((c) => c.id),
+        Date.now(),
+      );
       if (next !== d) saveDismissals(next);
       return next;
     });
@@ -108,10 +112,18 @@ function ConnectedPopupCard() {
           </Button>
           <span className="flex gap-1" aria-hidden>
             {queue.map((x, n) => (
-              <span key={x.id} className={`size-1.5 rounded-full ${n === i ? "bg-primary" : "bg-muted-foreground/30"}`} />
+              <span
+                key={x.id}
+                className={`size-1.5 rounded-full ${n === i ? "bg-primary" : "bg-muted-foreground/30"}`}
+              />
             ))}
           </span>
-          <Button variant="ghost" size="sm" disabled={i === queue.length - 1} onClick={() => setIndex(i + 1)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={i === queue.length - 1}
+            onClick={() => setIndex(i + 1)}
+          >
             Next <ChevronRight />
           </Button>
         </div>
