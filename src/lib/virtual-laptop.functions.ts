@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { VIRTUAL_TEST_RESULT, virtualLaptopReport } from "@/simulator/virtual-laptop";
 
 const Input = z.object({ orgId: z.string().uuid(), tested: z.boolean().default(false) });
 
@@ -32,17 +33,12 @@ export const runVirtualLaptop = createServerFn({ method: "POST" })
       throw new Error(`Virtual stick could not connect (${enr.status})`);
     await agent.call("Heartbeat", "POST", "/heartbeat", { state: "idle" });
     const serial = `SIMLAP-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-    const rep = await agent.call("Report laptop", "POST", "/inventory", {
-      system: {
-        manufacturer: "SIMULATED",
-        model: "Virtual laptop",
-        serial,
-        cpu: "Simulated CPU",
-        ram_bytes: 8e9,
-      },
-      os: { name: "Simulated Windows 11", version: "0.0" },
-      drives: [],
-    });
+    const rep = await agent.call(
+      "Report laptop",
+      "POST",
+      "/inventory",
+      virtualLaptopReport(serial),
+    );
     if (rep.status !== 200) throw new Error(`Virtual laptop could not report (${rep.status})`);
 
     const { data: disc } = await sb
@@ -63,27 +59,7 @@ export const runVirtualLaptop = createServerFn({ method: "POST" })
         const { error: accErr } = await sb.rpc("accept_laptop", { _laptop: lap.id });
         if (accErr) throw new Error(accErr.message);
       }
-      await agent.call("Report test result", "POST", "/diagnostics/result", {
-        test: "full",
-        outcome: "fail",
-        detail: "SIMULATED: 11 pass, 1 fail (Webcam)",
-        result: {
-          tests: {
-            keyboard: { outcome: "pass" },
-            display: { outcome: "pass" },
-            webcam: { outcome: "fail", note: "SIMULATED camera fault" },
-            microphone: { outcome: "pass" },
-            speakers: { outcome: "pass" },
-            touchpad: { outcome: "pass" },
-            battery: { outcome: "pass", values: { health_pct: 88 } },
-            charging: { outcome: "pass" },
-            wifi: { outcome: "pass" },
-            ports: { outcome: "pass" },
-            hinges: { outcome: "pass" },
-            body: { outcome: "pass" },
-          },
-        },
-      });
+      await agent.call("Report test result", "POST", "/diagnostics/result", VIRTUAL_TEST_RESULT);
     }
     return { deviceCode };
   });
