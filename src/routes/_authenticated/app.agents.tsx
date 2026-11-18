@@ -82,7 +82,6 @@ function AgentsPage() {
       <StationDiscoveries />
       {canManage && <PrepareUsbStick open={stickOpen} onOpenChange={setStickOpen} />}
 
-      {/* ponytail: renders every stick in one list; add search/paging when a company really has thousands */}
       <details className="rounded-lg border border-border bg-card">
         <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground marker:hidden">
           <Server className="mr-2 inline size-3.5 text-muted-foreground" />USB sticks &amp; stations
