@@ -1579,6 +1579,170 @@ export type Database = {
           },
         ]
       }
+      laptop_stage_events: {
+        Row: {
+          actor: string | null
+          created_at: string
+          from_key: string | null
+          id: number
+          laptop_id: string
+          org_id: string
+          reason: string | null
+          to_key: string
+          trigger: string
+        }
+        Insert: {
+          actor?: string | null
+          created_at?: string
+          from_key?: string | null
+          id?: never
+          laptop_id: string
+          org_id: string
+          reason?: string | null
+          to_key: string
+          trigger: string
+        }
+        Update: {
+          actor?: string | null
+          created_at?: string
+          from_key?: string | null
+          id?: never
+          laptop_id?: string
+          org_id?: string
+          reason?: string | null
+          to_key?: string
+          trigger?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "laptop_stage_events_org_id_laptop_id_fkey"
+            columns: ["org_id", "laptop_id"]
+            isOneToOne: false
+            referencedRelation: "laptops"
+            referencedColumns: ["org_id", "id"]
+          },
+        ]
+      }
+      laptop_stage_transitions: {
+        Row: {
+          from_key: string
+          to_key: string
+          trigger: string
+        }
+        Insert: {
+          from_key: string
+          to_key: string
+          trigger: string
+        }
+        Update: {
+          from_key?: string
+          to_key?: string
+          trigger?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "laptop_stage_transitions_from_key_fkey"
+            columns: ["from_key"]
+            isOneToOne: false
+            referencedRelation: "laptop_stages"
+            referencedColumns: ["key"]
+          },
+          {
+            foreignKeyName: "laptop_stage_transitions_to_key_fkey"
+            columns: ["to_key"]
+            isOneToOne: false
+            referencedRelation: "laptop_stages"
+            referencedColumns: ["key"]
+          },
+        ]
+      }
+      laptop_stages: {
+        Row: {
+          is_initial: boolean
+          is_terminal: boolean
+          key: string
+          label: string
+          planned: string | null
+          position: number
+          tone: string
+        }
+        Insert: {
+          is_initial?: boolean
+          is_terminal?: boolean
+          key: string
+          label: string
+          planned?: string | null
+          position: number
+          tone?: string
+        }
+        Update: {
+          is_initial?: boolean
+          is_terminal?: boolean
+          key?: string
+          label?: string
+          planned?: string | null
+          position?: number
+          tone?: string
+        }
+        Relationships: []
+      }
+      laptops: {
+        Row: {
+          claimed_at: string | null
+          claimed_by: string | null
+          device_code: string
+          first_seen_at: string
+          id: string
+          is_simulated: boolean
+          latest_discovery_id: string | null
+          org_id: string
+          stage_changed_at: string
+          stage_key: string
+          title: string | null
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          device_code: string
+          first_seen_at?: string
+          id?: string
+          is_simulated?: boolean
+          latest_discovery_id?: string | null
+          org_id: string
+          stage_changed_at?: string
+          stage_key: string
+          title?: string | null
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          device_code?: string
+          first_seen_at?: string
+          id?: string
+          is_simulated?: boolean
+          latest_discovery_id?: string | null
+          org_id?: string
+          stage_changed_at?: string
+          stage_key?: string
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "laptops_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "laptops_stage_key_fkey"
+            columns: ["stage_key"]
+            isOneToOne: false
+            referencedRelation: "laptop_stages"
+            referencedColumns: ["key"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -2135,6 +2299,16 @@ export type Database = {
         }
         Returns: string
       }
+      _laptop_move: {
+        Args: {
+          _actor: string
+          _laptop: string
+          _reason: string
+          _to: string
+          _trigger: string
+        }
+        Returns: boolean
+      }
       _log_job_event: {
         Args: {
           _actor: string
@@ -2173,6 +2347,7 @@ export type Database = {
         Args: { _invitation: string }
         Returns: string
       }
+      accept_laptop: { Args: { _laptop: string }; Returns: Json }
       agent_authenticate: {
         Args: { _credential: string; _nonce: string; _timestamp: string }
         Returns: Json
@@ -2412,6 +2587,7 @@ export type Database = {
           role: Database["public"]["Enums"]["org_role"]
         }[]
       }
+      release_laptop: { Args: { _laptop: string }; Returns: Json }
       request_diagnostic: {
         Args: { _agent: string; _test: string }
         Returns: Json
@@ -2440,6 +2616,7 @@ export type Database = {
         Args: { _org: string; _scenario: string }
         Returns: Json
       }
+      simulator_prepare_laptop: { Args: { _org: string }; Returns: Json }
       submit_job: { Args: { _job: string }; Returns: undefined }
       sweep_jobs: { Args: { _org: string }; Returns: number }
       update_member_role: {
