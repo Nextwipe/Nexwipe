@@ -10,7 +10,9 @@ let role = "technician";
 const accept = vi.fn().mockResolvedValue(undefined);
 const release = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/queries", () => ({
-  useLaptops: () => ({ data: laptops }),
+  useLaptopByCode: (code: string | null) => ({
+    data: (laptops as { device_code: string }[]).find((l) => l.device_code === code) ?? null,
+  }),
   useLaptopStages: () => ({ data: STAGES }),
   useMembers: () => ({
     data: [{ user_id: "u-priya", profiles: { full_name: "Priya", email: "p@x" } }],

@@ -16,10 +16,24 @@ let rows: ReturnType<typeof row>[] = [];
 let params: { discoveryId?: string } = {};
 
 let laptops: { data?: unknown[]; error?: unknown } = {};
+let askedCodes: string[] = [];
+const toastError = vi.fn();
+vi.mock("sonner", () => ({ toast: { error: (m: string) => toastError(m) } }));
 const accept = vi.fn();
 vi.mock("@/lib/queries", () => ({
   useConnectedNow: () => ({ data: rows }),
-  useLaptops: () => laptops,
+  useLaptopsByCodes: (codes: string[]) => {
+    askedCodes = codes;
+    return laptops.error
+      ? laptops
+      : laptops.data
+        ? {
+            data: (laptops.data as { device_code: string }[]).filter((l) =>
+              codes.includes(l.device_code),
+            ),
+          }
+        : {};
+  },
 }));
 vi.mock("@/lib/laptop-board", () => ({ acceptLaptop: (id: string) => accept(id) }));
 vi.mock("@tanstack/react-query", () => ({
@@ -101,6 +115,22 @@ describe("ConnectedPopup", () => {
       laptops = { data: [stage("NW-A", "testing")] };
       render(<ConnectedPopup />);
       expect(screen.queryByText(/Laptop connected/)).toBeNull();
+    });
+
+    it("looks up only the connected laptops, by device code (no list cap)", () => {
+      rows = [row("A", "1", "NW-A", "ENVY")];
+      laptops = { data: [stage("NW-A", "pending")] };
+      render(<ConnectedPopup />);
+      expect(askedCodes).toEqual(["NW-A"]);
+    });
+
+    it("losing the race says who won, as a message not tied to the card", async () => {
+      rows = [row("A", "1", "NW-A", "ENVY")];
+      laptops = { data: [stage("NW-A", "pending")] };
+      accept.mockRejectedValue(new Error("Already accepted by Priya"));
+      render(<ConnectedPopup />);
+      fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+      await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith("Already accepted by Priya"));
     });
 
     it("a pending laptop asks to be accepted", () => {

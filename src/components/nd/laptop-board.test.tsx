@@ -56,9 +56,34 @@ let laptops: { data?: unknown[]; error?: unknown; isLoading?: boolean } = {};
 let discoveries: unknown[] = [];
 const accept = vi.fn();
 
+// The mocks apply the same filters the server does (stage, mine, simulated), from one list.
+type F = { stage?: string; mine?: string; simulated: boolean };
+type L = { stage_key: string; claimed_by: string | null; is_simulated: boolean };
+const keep = (f: F) => (l: L) =>
+  (!f.mine || l.claimed_by === f.mine) && (f.simulated || !l.is_simulated);
+let lastList: F | null = null;
 vi.mock("@/lib/queries", () => ({
   useLaptopStages: () => ({ data: STAGES }),
-  useLaptops: () => laptops,
+  useLaptopCounts: (f: F, keys: string[]) =>
+    laptops.error
+      ? { error: laptops.error }
+      : {
+          data: Object.fromEntries(
+            keys.map((k) => [
+              k,
+              (laptops.data as L[]).filter((l) => l.stage_key === k && keep(f)(l)).length,
+            ]),
+          ),
+        },
+  useSimulatedCount: () => ({
+    data: ((laptops.data ?? []) as L[]).filter((l) => l.is_simulated).length,
+  }),
+  useLaptopList: (f: F) => {
+    lastList = f;
+    return {
+      data: ((laptops.data ?? []) as L[]).filter((l) => l.stage_key === f.stage && keep(f)(l)),
+    };
+  },
   useConnectedDevices: () => ({ data: discoveries }),
   useMembers: () => ({
     data: [
@@ -84,6 +109,8 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => <a href="#">{children}</a>,
 }));
 vi.mock("@/components/nd/prepare-usb-stick", () => ({ PrepareUsbStick: () => null }));
+const toastError = vi.fn();
+vi.mock("sonner", () => ({ toast: { error: (m: string) => toastError(m), success: vi.fn() } }));
 
 import { LaptopBoard } from "./laptop-board";
 
@@ -91,6 +118,7 @@ describe("LaptopBoard", () => {
   afterEach(() => {
     cleanup();
     accept.mockReset();
+    toastError.mockReset();
     discoveries = [];
   });
 
@@ -111,12 +139,18 @@ describe("LaptopBoard", () => {
     await waitFor(() => expect(accept).toHaveBeenCalledWith("A"));
   });
 
-  it("losing the race shows who accepted it", async () => {
+  it("losing the race shows who accepted it, even after the row moves away", async () => {
     laptops = { data: [lap("A", "pending")] };
     accept.mockRejectedValue(new Error("Already accepted by Priya"));
     render(<LaptopBoard />);
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
-    expect(await screen.findByText("Already accepted by Priya")).toBeTruthy();
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Already accepted by Priya"));
+  });
+
+  it("asks the server for one stage at a time (no cap on how many laptops exist)", () => {
+    laptops = { data: [lap("A", "pending")] };
+    render(<LaptopBoard />);
+    expect(lastList?.stage).toBe("pending");
   });
 
   it("shows who accepted a laptop, and Mine filters to my laptops", () => {
@@ -134,12 +168,16 @@ describe("LaptopBoard", () => {
     expect(screen.getByText(/Accepted by Me/)).toBeTruthy();
   });
 
-  it("labels simulated laptops and laptops already recorded in inventory", () => {
+  it("simulated laptops are left out of the counts until shown, and then labelled", () => {
     laptops = { data: [lap("A", "pending", { is_simulated: true }), lap("B", "pending")] };
     discoveries = [{ device_code: "NW-B", device_id: "dev-1", devices: { asset_tag: "TAG-B" } }];
     render(<LaptopBoard />);
-    expect(screen.getByText("Simulated")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /Pending\s*1/ })).toBeTruthy();
+    expect(screen.queryByText("Simulated")).toBeNull();
     expect(screen.getByText(/Recorded · TAG-B/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Show simulated \(1\)/ }));
+    expect(screen.getByRole("tab", { name: /Pending\s*2/ })).toBeTruthy();
+    expect(screen.getByText("Simulated")).toBeTruthy();
   });
 
   it("an empty board shows the three steps and the virtual laptop", () => {

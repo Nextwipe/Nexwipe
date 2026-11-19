@@ -19,15 +19,7 @@ import { useSessionUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
 import { relativeTime } from "@/lib/jobs";
 import { acceptLaptop, releaseLaptop } from "@/lib/laptop-board";
-import { memberName, useLaptopStages, useLaptops, useMembers } from "@/lib/queries";
-
-/** The laptop row (stage + claim) for a device code; null before stages exist (0027) or not found. */
-export function useLaptopByCode(deviceCode: string | null) {
-  const laptops = useLaptops();
-  return deviceCode
-    ? ((laptops.data ?? []).find((l) => l.device_code === deviceCode) ?? null)
-    : null;
-}
+import { memberName, useLaptopByCode, useLaptopStages, useMembers } from "@/lib/queries";
 
 /** Stage badge, who accepted it, and Accept / Release, for the laptop screen header. */
 export function LaptopClaimBar({ deviceCode }: { deviceCode: string | null }) {
@@ -36,7 +28,7 @@ export function LaptopClaimBar({ deviceCode }: { deviceCode: string | null }) {
   const me = useSessionUser().data?.id;
   const stages = useLaptopStages();
   const members = useMembers();
-  const lap = useLaptopByCode(deviceCode);
+  const lap = useLaptopByCode(deviceCode).data ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!lap) return null;
@@ -97,7 +89,7 @@ export function useClaimGuard(deviceCode: string | null): {
 } {
   const me = useSessionUser().data?.id;
   const members = useMembers();
-  const lap = useLaptopByCode(deviceCode);
+  const lap = useLaptopByCode(deviceCode).data ?? null;
   const [pendingFn, setPendingFn] = useState<(() => void) | null>(null);
   const key = lap ? `nexwipe.claim-ok.${lap.id}` : "";
   const someoneElse = !!lap?.claimed_by && lap.claimed_by !== me;

@@ -16,10 +16,13 @@ import {
   memberName,
   useConnectedDevices,
   useLaptopStages,
-  useLaptops,
+  useLaptopCounts,
+  useLaptopList,
+  useSimulatedCount,
   useMembers,
 } from "@/lib/queries";
 import { runVirtualLaptop } from "@/lib/virtual-laptop.functions";
+import { toast } from "sonner";
 
 /** Dashboard laptop board: every reported laptop, one tab per stage (from the database), Accept on Pending. */
 export function LaptopBoard() {
@@ -28,22 +31,27 @@ export function LaptopBoard() {
   const navigate = useNavigate();
   const me = useSessionUser().data?.id;
   const stages = useLaptopStages();
-  const laptops = useLaptops();
   const members = useMembers();
   const discoveries = useConnectedDevices();
   const [tab, setTab] = useState<string | null>(null);
   const [mine, setMine] = useState(false);
+  const [showSim, setShowSim] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
   const [stickOpen, setStickOpen] = useState(false);
   const [virtualBusy, setVirtualBusy] = useState(false);
   const [virtualError, setVirtualError] = useState<string | null>(null);
 
-  const all = useMemo(() => laptops.data ?? [], [laptops.data]);
+  // Counting and filtering happen in the database, so the board is right however many laptops exist.
+  const filter = { mine: mine && me ? me : undefined, simulated: showSim };
+  const stageKeys = useMemo(() => (stages.data ?? []).map((st) => st.key), [stages.data]);
+  const counts = useLaptopCounts(filter, stageKeys);
+  const simCount = useSimulatedCount().data ?? 0;
   const tabs = useMemo(
-    () => boardTabs(stages.data ?? [], all, mine && me ? me : undefined),
-    [stages.data, all, mine, me],
+    () => boardTabs(stages.data ?? [], counts.data ?? {}),
+    [stages.data, counts.data],
   );
+  const current = tab ?? defaultTab(tabs);
+  const list = useLaptopList({ ...filter, stage: current });
   const memberById = new Map((members.data ?? []).map((m) => [m.user_id, m]));
   // "Recorded" label: the laptop already has an inventory record (received by hand or added).
   const recorded = new Map(
@@ -52,7 +60,7 @@ export function LaptopBoard() {
       .map((d) => [d.device_code!, d.devices?.asset_tag ?? "inventory"]),
   );
 
-  if (needsDbUpdate(laptops.error) || needsDbUpdate(stages.error))
+  if (needsDbUpdate(counts.error) || needsDbUpdate(stages.error) || needsDbUpdate(list.error))
     return (
       <EmptyState
         icon={DatabaseZap}
@@ -60,18 +68,18 @@ export function LaptopBoard() {
         description="The laptop board needs database update 0027, which has not been applied yet. The project owner applies it in Lovable; nothing is wrong with your data."
       />
     );
-  if (laptops.isLoading || stages.isLoading) return <LoadingBlock />;
-  if (laptops.error) return <ErrorBlock error={laptops.error} />;
+  if (stages.isLoading || counts.isLoading) return <LoadingBlock />;
+  if (counts.error || list.error) return <ErrorBlock error={counts.error ?? list.error} />;
 
   async function onAccept(id: string, discoveryId: string | null) {
     setBusy(id);
-    setErrors((e) => ({ ...e, [id]: "" }));
     try {
       await acceptLaptop(id);
       qc.invalidateQueries({ queryKey: ["laptops", orgId] });
       if (discoveryId) navigate({ to: "/app/connected/$discoveryId", params: { discoveryId } });
     } catch (err) {
-      setErrors((e) => ({ ...e, [id]: errorMessage(err) }));
+      // A toast, not text on the row: after the refresh the row leaves the Pending tab.
+      toast.error(errorMessage(err));
       qc.invalidateQueries({ queryKey: ["laptops", orgId] });
     } finally {
       setBusy(null);
@@ -84,6 +92,7 @@ export function LaptopBoard() {
     try {
       await runVirtualLaptop({ data: { orgId, tested: false } });
       qc.invalidateQueries({ queryKey: ["laptops", orgId] });
+      setShowSim(true);
       setTab("pending");
     } catch (err) {
       setVirtualError(errorMessage(err));
@@ -102,7 +111,8 @@ export function LaptopBoard() {
     <PrepareUsbStick open={stickOpen} onOpenChange={setStickOpen} />
   );
 
-  if (all.length === 0)
+  const total = Object.values(counts.data ?? {}).reduce((a, b) => a + b, 0);
+  if (total === 0 && !mine && !showSim)
     return (
       <section className="space-y-4 rounded-lg border border-border bg-card p-5 shadow-card">
         <h2 className="text-lg font-semibold text-foreground">Test your first laptop</h2>
@@ -133,14 +143,18 @@ export function LaptopBoard() {
         </ol>
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3 text-sm text-muted-foreground">
           No laptop at hand? {virtualButton}
+          {simCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => setShowSim(true)}>
+              Show simulated ({simCount})
+            </Button>
+          )}
           {virtualError && <span className="text-danger">{virtualError}</span>}
         </div>
         {stickDialog}
       </section>
     );
 
-  const current = tab ?? defaultTab(tabs);
-  const rows = all.filter((l) => l.stage_key === current && (!mine || l.claimed_by === me));
+  const rows = list.data ?? [];
 
   return (
     <section
@@ -179,6 +193,16 @@ export function LaptopBoard() {
         >
           Only mine
         </Button>
+        {(simCount > 0 || showSim) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={showSim}
+            onClick={() => setShowSim((v) => !v)}
+          >
+            {showSim ? "Hide simulated" : `Show simulated (${simCount})`}
+          </Button>
+        )}
       </div>
 
       {rows.length === 0 ? (
@@ -214,7 +238,6 @@ export function LaptopBoard() {
                     {claimer && <span>Accepted by {claimer}</span>}
                     <span>{relativeTime(l.stage_changed_at)}</span>
                   </p>
-                  {errors[l.id] && <p className="text-sm text-danger">{errors[l.id]}</p>}
                 </div>
                 {l.stage_key === "pending" && can(role, "inventory.write") ? (
                   <Button

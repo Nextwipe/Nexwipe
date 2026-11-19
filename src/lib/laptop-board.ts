@@ -17,13 +17,8 @@ export type Tab = {
   planned: string | null;
 };
 
-/** One tab per stage in position order, counting laptops (only mine when `mineUserId` is given). */
-export function boardTabs(
-  stages: Stage[],
-  laptops: Array<{ stage_key: string; claimed_by: string | null }>,
-  mineUserId?: string,
-): Tab[] {
-  const shown = mineUserId ? laptops.filter((l) => l.claimed_by === mineUserId) : laptops;
+/** One tab per stage in position order, with the counts the database returned. */
+export function boardTabs(stages: Stage[], counts: Record<string, number>): Tab[] {
   return [...stages]
     .sort((a, b) => a.position - b.position)
     .map((s) => ({
@@ -31,7 +26,7 @@ export function boardTabs(
       label: s.label,
       tone: s.tone,
       planned: s.planned,
-      count: shown.filter((l) => l.stage_key === s.key).length,
+      count: counts[s.key] ?? 0,
     }));
 }
 

@@ -29,9 +29,9 @@ import { can } from "@/lib/permissions";
 import {
   formatDateTime,
   memberName,
+  useLaptopByCode,
   useLaptopEvents,
   useLaptopStages,
-  useLaptops,
   useMembers,
   useConnectedDevice,
   useDiagnosticResults,
@@ -53,7 +53,7 @@ import {
 import { reviewFlags } from "@/lib/discovery";
 import { tagFields } from "@/lib/device-tag";
 import { DeviceTagDialog, GradeSelect } from "@/components/nd/device-tag-dialog";
-import { LaptopClaimBar, useClaimGuard, useLaptopByCode } from "@/components/nd/laptop-claim";
+import { LaptopClaimBar, useClaimGuard } from "@/components/nd/laptop-claim";
 import { stageEventText } from "@/lib/laptop-board";
 
 export const Route = createFileRoute("/_authenticated/app/connected/$discoveryId")({
@@ -106,10 +106,10 @@ function ConnectedDevicePage() {
   const diag = useDiagnosticResults({ deviceCode: q.data?.device_code ?? null });
   const history = useLaptopHistory(q.data?.device_code ?? null);
   const stick = useStickDiscoveries(q.data?.agent_id ?? null);
-  const laptopsQ = useLaptops();
   const stages = useLaptopStages();
   const members = useMembers();
-  const lap = useLaptopByCode(q.data?.device_code ?? null);
+  const lapQ = useLaptopByCode(q.data?.device_code ?? null);
+  const lap = lapQ.data ?? null;
   const stageEvents = useLaptopEvents(lap?.id ?? null);
   const { guard, dialog: claimDialog } = useClaimGuard(q.data?.device_code ?? null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -149,7 +149,7 @@ function ConnectedDevicePage() {
   const position = stick.data ? stickPosition(stick.data, d.id) : null;
   // With laptop stages (0027) the server files results under the stick's current laptop, so a
   // stick that came back to this laptop (A -> B -> A) is fine; before 0027 it is not.
-  const stagesLive = !!laptopsQ.data;
+  const stagesLive = lapQ.isSuccess;
   const testable = position === "current" || (position === "misfiled" && stagesLive);
   const stickOnline = ag?.status === "active" && isOnline(ag?.last_heartbeat_at);
   const online = stickOnline && position !== "moved";

@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { SimulatedBadge } from "@/components/nd/status-badge";
 import { useOrg } from "@/lib/org-context";
 import { can } from "@/lib/permissions";
-import { useConnectedNow, useLaptops } from "@/lib/queries";
+import { useConnectedNow, useLaptopsByCodes } from "@/lib/queries";
+import { toast } from "sonner";
 import { acceptLaptop } from "@/lib/laptop-board";
 import { errorMessage } from "@/components/nd/page";
 import { relativeTime } from "@/lib/jobs";
@@ -31,11 +32,9 @@ export function ConnectedPopup() {
 
 function ConnectedPopupCard() {
   const q = useConnectedNow();
-  const laptops = useLaptops();
   const { orgId } = useOrg();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [acceptError, setAcceptError] = useState<string | null>(null);
   const params = useParams({ strict: false }) as { discoveryId?: string };
   const [dismissed, setDismissed] = useState<Dismissals>(loadDismissals);
   const [index, setIndex] = useState(0);
@@ -47,7 +46,15 @@ function ConnectedPopupCard() {
     const t = setInterval(() => setTick(Date.now()), 5000);
     return () => clearInterval(t);
   }, []);
-  // Laptop id per device code for laptops still Pending; null until stages exist (before 0027).
+  // Connected right now (by the clock), then: of those, which are still Pending. Only the few
+  // connected laptops are looked up, so this works however many laptops a company has.
+  const live = useMemo(() => connectedLaptops(q.data ?? [], tick), [q.data, tick]);
+  const codes = useMemo(
+    () => [...new Set(live.map((c) => c.device_code).filter((c): c is string => !!c))].sort(),
+    [live],
+  );
+  const laptops = useLaptopsByCodes(codes);
+  // Laptop id per device code for laptops still Pending; null before stages exist (before 0027).
   const pending = useMemo(
     () =>
       laptops.data
@@ -57,10 +64,10 @@ function ConnectedPopupCard() {
         : null,
     [laptops.data],
   );
-  const connected = useMemo(() => {
-    const now = connectedLaptops(q.data ?? [], tick);
-    return pending ? now.filter((c) => c.device_code && pending.has(c.device_code)) : now;
-  }, [q.data, tick, pending]);
+  const connected = useMemo(
+    () => (pending ? live.filter((c) => c.device_code && pending.has(c.device_code)) : live),
+    [live, pending],
+  );
 
   // Forget dismissals for laptops that disconnected (or after an hour), so they pop up next time.
   useEffect(() => {
@@ -152,20 +159,19 @@ function ConnectedPopupCard() {
             size="lg"
             className="mt-3 w-full"
             onClick={async () => {
-              setAcceptError(null);
               try {
                 await acceptLaptop(pending.get(l.device_code!)!);
                 qc.invalidateQueries({ queryKey: ["laptops", orgId] });
                 navigate({ to: "/app/connected/$discoveryId", params: { discoveryId: l.id } });
               } catch (err) {
-                setAcceptError(errorMessage(err));
+                // A toast, not text on the card: after the refresh this laptop leaves the queue.
+                toast.error(errorMessage(err));
                 qc.invalidateQueries({ queryKey: ["laptops", orgId] });
               }
             }}
           >
             Accept
           </Button>
-          {acceptError && <p className="mt-1 text-sm text-danger">{acceptError}</p>}
           <Link
             to="/app/connected/$discoveryId"
             params={{ discoveryId: l.id }}

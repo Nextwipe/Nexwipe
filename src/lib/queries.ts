@@ -265,7 +265,8 @@ export function useChromebookEvents(recordId: string) {
 const CONNECTED_COLUMNS =
   "id, agent_id, device_id, device_code, system_serial, payload, is_simulated, is_read_only_test, reported_at, last_reported_at, report_count, review_flags, hardware_origin, hardware_origin_reason, agents(name, platform, status, agent_version, last_heartbeat_at, reboot_status, reboot_detail, reboot_status_at, diagnostic_status, diagnostic_test, diagnostic_detail, diagnostic_status_at), devices(asset_tag, grade, hardware_verified, hardware_origin, source)";
 
-const DIAGNOSTIC_COLUMNS = "id, test, outcome, result, detail, is_simulated, created_at, agent_id, agents(name)";
+const DIAGNOSTIC_COLUMNS =
+  "id, test, outcome, result, detail, is_simulated, created_at, agent_id, agents(name)";
 
 export function useConnectedDevices() {
   const { orgId } = useOrg();
@@ -310,7 +311,9 @@ export function useConnectedNow() {
         .limit(200);
       if (error) throw error;
       const rows = data as unknown as ConnectedNowRow[];
-      const ids = connectedLaptops(rows).map((r) => r.id).join(",");
+      const ids = connectedLaptops(rows)
+        .map((r) => r.id)
+        .join(",");
       if (prev.current !== null && prev.current !== ids)
         qc.invalidateQueries({ queryKey: ["connected-devices", orgId] });
       prev.current = ids;
@@ -441,22 +444,117 @@ export function useLaptopStages() {
   });
 }
 
-/** Every laptop of the company with its stage and claim; polled so Accepts by others show up. */
-export function useLaptops() {
+const LAPTOP_COLUMNS =
+  "id, device_code, title, latest_discovery_id, stage_key, is_simulated, claimed_by, claimed_at, stage_changed_at, first_seen_at";
+const laptopRetry = (n: number, err: unknown) => !needsDbUpdate(err) && n < 3;
+
+/** Board filter: `mine` = only laptops this user accepted; simulated laptops only when asked for. */
+export type LaptopFilter = { mine?: string | undefined; simulated: boolean };
+
+/** Laptops in one stage (the open tab), newest change first; polled so Accepts by others show up. */
+export function useLaptopList(f: LaptopFilter & { stage: string }) {
   const { orgId } = useOrg();
   return useQuery({
-    queryKey: ["laptops", orgId],
+    queryKey: ["laptops", orgId, "list", f.stage, f.mine ?? null, f.simulated],
     refetchInterval: 5000,
-    retry: (n, err) => !needsDbUpdate(err) && n < 3,
+    retry: laptopRetry,
+    queryFn: async () => {
+      let q = supabase
+        .from("laptops")
+        .select(LAPTOP_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("stage_key", f.stage);
+      if (f.mine) q = q.eq("claimed_by", f.mine);
+      if (!f.simulated) q = q.eq("is_simulated", false);
+      // ponytail: newest 200 per tab; add paging/search when a stage really holds more
+      const { data, error } = await q.order("stage_changed_at", { ascending: false }).limit(200);
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** How many laptops are in each stage, counted by the database (no row limit). */
+export function useLaptopCounts(f: LaptopFilter, stageKeys: string[]) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: stageKeys.length > 0,
+    queryKey: ["laptops", orgId, "counts", f.mine ?? null, f.simulated, stageKeys.join(",")],
+    refetchInterval: 5000,
+    retry: laptopRetry,
+    queryFn: async () => {
+      const pairs = await Promise.all(
+        stageKeys.map(async (k) => {
+          let q = supabase
+            .from("laptops")
+            .select("id", { count: "exact", head: true })
+            .eq("org_id", orgId)
+            .eq("stage_key", k);
+          if (f.mine) q = q.eq("claimed_by", f.mine);
+          if (!f.simulated) q = q.eq("is_simulated", false);
+          const { count, error } = await q;
+          if (error) throw error;
+          return [k, count ?? 0] as const;
+        }),
+      );
+      return Object.fromEntries(pairs) as Record<string, number>;
+    },
+  });
+}
+
+/** How many simulated laptops exist (shown on the "Show simulated" toggle). */
+export function useSimulatedCount() {
+  const { orgId } = useOrg();
+  return useQuery({
+    queryKey: ["laptops", orgId, "simulated-count"],
+    refetchInterval: 30_000,
+    retry: laptopRetry,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("laptops")
+        .select("id", { count: "exact", head: true })
+        .eq("org_id", orgId)
+        .eq("is_simulated", true);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+}
+
+/** The laptops with these device codes (the pop-up: only the few connected right now). */
+export function useLaptopsByCodes(codes: string[]) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: codes.length > 0,
+    queryKey: ["laptops", orgId, "codes", codes.join(",")],
+    retry: laptopRetry,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("laptops")
-        .select(
-          "id, device_code, title, latest_discovery_id, stage_key, is_simulated, claimed_by, claimed_at, stage_changed_at, first_seen_at",
-        )
+        .select(LAPTOP_COLUMNS)
         .eq("org_id", orgId)
-        .order("stage_changed_at", { ascending: false })
-        .limit(500);
+        .in("device_code", codes);
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+/** One laptop by device code (laptop screen: stage and claim); null when not found. */
+export function useLaptopByCode(deviceCode: string | null) {
+  const { orgId } = useOrg();
+  return useQuery({
+    enabled: Boolean(deviceCode),
+    queryKey: ["laptops", orgId, "code", deviceCode],
+    refetchInterval: 5000,
+    retry: laptopRetry,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("laptops")
+        .select(LAPTOP_COLUMNS)
+        .eq("org_id", orgId)
+        .eq("device_code", deviceCode!)
+        .maybeSingle();
       if (error) throw error;
       return data;
     },
