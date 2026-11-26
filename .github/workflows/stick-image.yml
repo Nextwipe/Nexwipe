@@ -1,0 +1,52 @@
+# Builds the NexWipe stick image (read-only station) on a GitHub Linux machine.
+# Result: Actions run page -> Artifacts -> nexwipe-stick-<commit>. Contains the .img.xz to write with balenaEtcher/Rufus.
+# The image has no erase tools: build.sh runs verify-image.sh and fails the build if any are found.
+name: Build NexWipe stick image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - agent-handoff/station/**
+      - agent-handoff/usb-image/**
+      - .github/workflows/stick-image.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Station program tests
+        working-directory: agent-handoff/station
+        run: python3 -m unittest discover -s tests
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap debian-archive-keyring \
+            squashfs-tools gdisk dosfstools mtools e2fsprogs xxd xz-utils
+
+      - name: Build image (includes the no-erase-tools check)
+        run: sudo ./agent-handoff/usb-image/build.sh
+
+      - name: Compress and fingerprint
+        working-directory: agent-handoff/usb-image/build
+        run: |
+          sudo xz -T0 -6 -k ./*.img
+          sudo sh -c 'sha256sum ./*.img.xz > image-xz.sha256'
+          cat ./*.sha256 components.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexwipe-stick-${{ github.sha }}
+          retention-days: 30
+          compression-level: 0
+          path: |
+            agent-handoff/usb-image/build/*.img.xz
+            agent-handoff/usb-image/build/*.sha256
+            agent-handoff/usb-image/build/installed-packages.txt
