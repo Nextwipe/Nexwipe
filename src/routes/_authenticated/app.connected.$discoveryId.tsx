@@ -10,6 +10,7 @@ import {
   Laptop,
   Package,
   Play,
+  Power,
   RefreshCw,
   Star,
   Tag,
@@ -19,6 +20,16 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { EmptyState, ErrorBlock, LoadingBlock, Mono, errorMessage } from "@/components/nd/page";
 import { SimulatedBadge, ToneBadge } from "@/components/nd/status-badge";
 import { HardwareOriginBadge } from "@/components/nd/hardware-origin-badge";
@@ -43,6 +54,8 @@ import {
   canRebootToUsb,
   helperRunsSuite,
   isCommandPending,
+  helperAtLeast,
+  RESTART_MIN_HELPER,
   SUITE_MIN_HELPER,
   deviceSections,
   deviceSummary,
@@ -60,6 +73,14 @@ export const Route = createFileRoute("/_authenticated/app/connected/$discoveryId
   staticData: { sitemap: false },
   component: ConnectedDevicePage,
 });
+
+const RESTART_STATUS: Record<string, string> = {
+  requested: "Waiting for the laptop to pick up the request…",
+  delivered: "The laptop got the request: it shows a 15-second countdown (C cancels it there)",
+  done: "The laptop is restarting into the NexWipe stick",
+  failed: "The laptop could not restart into the stick",
+  expired: "The laptop did not pick up the request within 2 minutes",
+};
 
 const DIAGNOSTIC_STATUS: Record<string, string> = {
   requested: "Waiting for the laptop to pick up the test…",
@@ -115,6 +136,7 @@ function ConnectedDevicePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null);
   const [tagOpen, setTagOpen] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   if (q.isLoading) return <LoadingBlock />;
   if (needsDbUpdate(q.error))
@@ -198,6 +220,22 @@ function ConnectedDevicePage() {
     qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
   }
 
+  async function restartIntoNexWipe() {
+    setBusy("restart");
+    const { error } = await supabase.rpc("request_station_action", {
+      _agent: d.agent_id,
+      _action: "reboot_to_usb",
+    });
+    setBusy(null);
+    setConfirmRestart(false);
+    if (error) {
+      toast.error(errorMessage(error));
+      return;
+    }
+    toast.success("Sent. The laptop shows a 15-second countdown, then restarts into the stick.");
+    qc.invalidateQueries({ queryKey: ["connected-device", orgId, discoveryId] });
+  }
+
   async function runTest() {
     setBusy("full");
     const { error } = await supabase.rpc("request_diagnostic", {
@@ -218,6 +256,9 @@ function ConnectedDevicePage() {
     qc.invalidateQueries({ queryKey: ["device", d.device_id] });
   };
   const canStickAct = mayAct && stickOnline && busy === null;
+  const inWindows = canRebootToUsb(ag?.platform);
+  const restartPending = isCommandPending(ag?.reboot_status, ag?.reboot_status_at);
+  const restartOldHelper = inWindows && !helperAtLeast(ag?.agent_version, RESTART_MIN_HELPER);
 
   // History: which stick did what, newest first.
   type Event = { at: string; text: string };
@@ -287,7 +328,7 @@ function ConnectedDevicePage() {
       </div>
 
       <section aria-label="Actions" className="space-y-2">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <Tile
             icon={Play}
             label="Run test"
@@ -348,9 +389,27 @@ function ConnectedDevicePage() {
             disabled={!canStickAct || position === "moved"}
             onClick={() => guard(rescan)}
           />
+          {inWindows && (
+            <Tile
+              icon={Power}
+              label="Restart into NexWipe"
+              sub={restartOldHelper ? "Prepare stick again" : restartPending ? "Sent…" : undefined}
+              disabled={!canStickAct || position === "moved" || restartPending || restartOldHelper}
+              onClick={() => guard(() => setConfirmRestart(true))}
+            />
+          )}
           <Tile icon={Eraser} label="Erase" sub="Planned" disabled />
         </div>
         {reason && <p className="text-sm text-muted-foreground">{reason}</p>}
+        {inWindows && ag?.reboot_status && (
+          <p
+            className={`text-sm ${ag.reboot_status === "failed" || ag.reboot_status === "expired" ? "text-warning" : "text-muted-foreground"}`}
+          >
+            Restart into NexWipe: {RESTART_STATUS[ag.reboot_status] ?? ag.reboot_status}
+            {ag.reboot_detail ? ` (${ag.reboot_detail})` : ""} ·{" "}
+            {formatDateTime(ag.reboot_status_at)}
+          </p>
+        )}
       </section>
 
       <Tabs defaultValue="report">
@@ -429,6 +488,32 @@ function ConnectedDevicePage() {
       {tag && <DeviceTagDialog fields={tag} open={tagOpen} onOpenChange={setTagOpen} />}
       <AddToInventoryDialog target={addTarget} onClose={() => setAddTarget(null)} />
       {claimDialog}
+      <AlertDialog open={confirmRestart} onOpenChange={setConfirmRestart}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restart this laptop into NexWipe?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {s.title}
+              {d.system_serial ? ` (S/N ${d.system_serial})` : ""} shows a 15-second countdown, then
+              restarts and starts once from its NexWipe stick. Unsaved work on the laptop is lost.
+              If BitLocker is on, it is paused for this one restart. Nothing is erased. Someone at
+              the laptop can press C to cancel.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void restartIntoNexWipe();
+              }}
+              disabled={busy !== null}
+            >
+              Restart into NexWipe
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

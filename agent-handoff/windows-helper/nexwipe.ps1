@@ -18,7 +18,7 @@
 param([switch]$DryRun, [switch]$SelfTest, [string]$Out = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "0.6.2-win"
+$VERSION = "0.7.0-win"
 $API = "/api/public/agent/v1"
 $HEARTBEAT_SECONDS = 5
 $Culture = [Globalization.CultureInfo]::InvariantCulture
@@ -33,6 +33,8 @@ $Allowed = @(
   @{ exe = "bcdedit";  rx = '^/enum firmware$' },
   @{ exe = "bcdedit";  rx = '^/enum \{current\}$' },
   @{ exe = "bcdedit";  rx = '^/set \{fwbootmgr\} bootsequence \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$' },
+  # BitLocker: pause protection for exactly ONE restart (what Windows Update does). Never turns BitLocker off.
+  @{ exe = "manage-bde"; rx = '^-protectors -disable [A-Z]: -RebootCount 1$' },
   @{ exe = "shutdown"; rx = '^/r /t ([0-9]|[1-5][0-9]|60) /c NexWipe: restarting into the NexWipe USB stick$' },
   # complete test suite: Edge/Chrome showing ONLY the local test page; Windows camera/microphone privacy pages
   @{ exe = "browser";  rx = '^--app=http://127\.0\.0\.1:[0-9]{2,5}/\?t=[0-9a-f]{32} --user-data-dir="[^"]{1,200}" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required --start-maximized$' },
@@ -219,7 +221,11 @@ function Invoke-SelfTest {
   Check "refuses diskpart" (-not (Test-Allowed "diskpart" @("/s", "x.txt")))
   Check "refuses format" (-not (Test-Allowed "format" @("C:")))
   Check "refuses cipher /w" (-not (Test-Allowed "cipher" @("/w:C:\")))
-  Check "refuses manage-bde" (-not (Test-Allowed "manage-bde" @("-off", "C:")))
+  Check "refuses manage-bde -off" (-not (Test-Allowed "manage-bde" @("-off", "C:")))
+  Check "allows BitLocker pause for one restart" (Test-Allowed "manage-bde" @("-protectors", "-disable", "C:", "-RebootCount", "1"))
+  Check "refuses BitLocker pause without a restart limit" (-not (Test-Allowed "manage-bde" @("-protectors", "-disable", "C:")))
+  Check "refuses removing BitLocker protectors" (-not (Test-Allowed "manage-bde" @("-protectors", "-delete", "C:")))
+  Check "stick id: new id is 32 hex" ((New-StickId) -match '^[0-9a-f]{32}$')
   Check "refuses a chained command" (-not (Test-Allowed "netsh" @("wlan", "show", "networks;", "format", "c:")))
   Check "allows restart with the NexWipe message" (Test-Allowed "shutdown" @("/r", "/t", "10", "/c", "NexWipe: restarting into the NexWipe USB stick"))
   Check "refuses shutdown with other options" (-not (Test-Allowed "shutdown" @("/r", "/t", "0", "/f")))
@@ -693,7 +699,30 @@ function Connect-Server($setup) {
   return $false
 }
 
+function New-StickId { return (-join ((1..16) | ForEach-Object { "{0:x2}" -f (Get-Random -Minimum 0 -Maximum 256) })) }
+
+# This stick's random id, shared with the boot system (nd_station/setup_file.py). Created on first use, never by the
+# preparing tool, so copies of an unused stick each get their own.
+function Get-StickId {
+  $p = Join-Path $Here "nexwipe-stick-id"
+  if (Test-Path $p) { $cur = ([IO.File]::ReadAllText($p)).Trim(); if ($cur -match '^[0-9a-f]{32}$') { return $cur } }
+  $id = New-StickId
+  Save-Text $p ($id + "`n")
+  return $id
+}
+
 function Register-Station($setup) {
+  $key = [string](Get-Field $setup "stick_key")
+  if ($key -match '^ndstk_[0-9a-f]{64}$') {
+    $name = Get-Field $setup "station_name"; if (-not $name) { $name = "NexWipe stick" }
+    try { $sid = Get-StickId } catch { Say "Could not write to the stick ($($_.Exception.Message)). Is it write-protected?" "Red"; return $false }
+    $r = Invoke-Nd "POST" "/enroll" @{ stick_key = $key; stick_id = $sid; stick_part = "windows"; name = (Cap $name 100); agent_version = $VERSION; platform = (Cap "windows $(Get-OsVersion)" 80); hostname = (Cap $env:COMPUTERNAME 120) }
+    if ($r.status -ne 201) { Say "This stick could not connect: $($r.error)" "Red"; return $false }
+    $script:Credential = [string](Get-Field $r.body "credential")
+    Save-State (Get-Field $r.body "name") (Get-Field $r.body "agent_id")
+    Say "Connected as '$(Get-Field $r.body 'name')'." "Green"
+    return $true
+  }
   $token = Get-Field $setup "enrollment_token"
   if (-not $token) {
     Write-Host "  This stick is not connected to NexWipe yet."
@@ -738,6 +767,11 @@ function Invoke-RebootToUsb($stick) {
     Say "Run NexWipe from the USB stick to use Reboot into NexWipe." "Red"
     return
   }
+  if (-not (Test-Path (Join-Path $Here "EFI\BOOT\BOOTX64.EFI"))) {
+    Send-ActionResult $false "This stick can't start the laptop. Prepare it with Prepare USB stick (step 1: boot image)"
+    Say "This stick can't start the laptop: it has no NexWipe boot system. Prepare it with Prepare USB stick, step 1." "Red"
+    return
+  }
   try { $fw = Invoke-Tool "bcdedit" @("/enum", "firmware") } catch { Send-ActionResult $false "Could not read firmware boot entries"; Say $_.Exception.Message "Red"; return }
   $entry = Find-UsbBootEntry $fw.text $stick.model
   if (-not $entry) {
@@ -761,6 +795,20 @@ function Invoke-RebootToUsb($stick) {
     }
   }
   Write-Host ""
+  # BitLocker on the Windows drive: pause it for this one restart, or the laptop stops at the recovery-key screen.
+  # It turns itself back on at the next Windows start. If the pause fails, do not restart.
+  $sys = ([string]$env:SystemDrive).ToUpperInvariant()
+  $vol = @(Get-Wmi "Win32_EncryptableVolume" "root\cimv2\Security\MicrosoftVolumeEncryption") | Where-Object { ([string]$_.DriveLetter).ToUpperInvariant() -eq $sys } | Select-Object -First 1
+  if ($vol -and [int]$vol.ProtectionStatus -eq 1) {
+    $bde = $null
+    try { $bde = Invoke-Tool "manage-bde" @("-protectors", "-disable", $sys, "-RebootCount", "1") } catch {}
+    if (-not $bde -or $bde.code -ne 0) {
+      Send-ActionResult $false "Could not pause BitLocker for the restart; not restarting (the laptop would ask for its recovery key)"
+      Say "Could not pause BitLocker, so NOT restarting (the laptop would ask for its recovery key)." "Red"
+      return
+    }
+    Say "BitLocker paused for this one restart; it turns itself back on when Windows starts again." "Gray"
+  }
   # One-time boot (BootNext): the permanent boot order is not changed.
   $set = Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "bootsequence", $entry.guid)
   if ($set.code -ne 0) { Send-ActionResult $false (Cap "bcdedit failed: $($set.text)" 300); Say "Could not set the one-time boot entry: $($set.text)" "Red"; return }

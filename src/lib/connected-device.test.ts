@@ -9,7 +9,9 @@ import {
   isOnline,
   stickPosition,
   isCommandPending,
+  helperAtLeast,
   helperRunsSuite,
+  RESTART_MIN_HELPER,
   needsDbUpdate,
 } from "./connected-device";
 
@@ -310,5 +312,14 @@ describe("helperRunsSuite", () => {
     expect(helperRunsSuite("0.6.1-win")).toBe(false);
     expect(helperRunsSuite("0.5.0-win")).toBe(false);
     expect(helperRunsSuite(null)).toBe(false);
+  });
+});
+
+describe("helperAtLeast (Restart into NexWipe)", () => {
+  it("needs 0.7.0 or newer, so old sticks never restart without pausing BitLocker", () => {
+    expect(helperAtLeast("0.6.2-win", RESTART_MIN_HELPER)).toBe(false);
+    expect(helperAtLeast("0.7.0-win", RESTART_MIN_HELPER)).toBe(true);
+    expect(helperAtLeast("0.10.0-win", RESTART_MIN_HELPER)).toBe(true);
+    expect(helperAtLeast(null, RESTART_MIN_HELPER)).toBe(false);
   });
 });

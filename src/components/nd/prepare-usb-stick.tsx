@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -73,7 +72,6 @@ export function PrepareUsbStick({
   onOpenChange: (v: boolean) => void;
 }) {
   const { orgId } = useOrg();
-  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<StickFile[] | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -94,21 +92,22 @@ export function PrepareUsbStick({
       `Stick ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
     const ssid = String(f.get("ssid") ?? "").trim();
     setBusy(true);
-    const { data, error } = await supabase.rpc("create_enrollment_token", {
+    // A stick key (not a one-time code): the Windows side and the boot side of this stick each register with it,
+    // on any number of laptops. Revocable in the database; a revoked stick cannot come back by itself.
+    const { data, error } = await supabase.rpc("create_stick_key", {
       _org: orgId,
       _label: label,
-      _site: null as never,
-      _ttl_hours: Number(f.get("ttl") || 24),
+      _expires_at: null as never,
+      _max_sticks: null as never,
     });
     setBusy(false);
     if (error) {
       toast.error(errorMessage(error));
       return;
     }
-    qc.invalidateQueries({ queryKey: ["enrollment-tokens", orgId] });
     const setup = {
       server: window.location.origin,
-      enrollment_token: data as string,
+      stick_key: (data as { key: string }).key,
       station_name: label,
       ...(ssid ? { wifi: { ssid, password: String(f.get("wifi_password") ?? "") } } : {}),
     };
@@ -162,14 +161,10 @@ export function PrepareUsbStick({
                 placeholder="Leave empty to name it by today's date and time"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="stick-ttl">First use within (hours)</Label>
-              <Input id="stick-ttl" name="ttl" type="number" min={1} max={168} defaultValue={24} />
-              <p className="text-xs text-muted-foreground">
-                The stick connects itself on the first laptop it runs on; after that it keeps
-                working without a new token.
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              The stick connects itself, in Windows and when the laptop starts from it, on any
+              number of laptops.
+            </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="stick-ssid">Wi-Fi name (optional)</Label>
@@ -187,8 +182,8 @@ export function PrepareUsbStick({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              The Wi-Fi password and the one-time token are saved as plain text on the stick. Keep
-              the stick with your staff.
+              The Wi-Fi password and the stick&apos;s key are saved as plain text on the stick. Keep
+              the stick with your staff. Use a separate bench Wi-Fi, not the office network.
             </p>
           </form>
         ) : (
@@ -217,8 +212,8 @@ export function PrepareUsbStick({
             </ul>
             {done && <p className="text-success">{done}</p>}
             <p className="text-xs text-warning">
-              The token inside works once and was not shown anywhere else. If writing fails, close
-              this and prepare the stick again.
+              The stick&apos;s key is not shown anywhere else. If writing fails, close this and
+              prepare the stick again.
             </p>
           </div>
         )}
