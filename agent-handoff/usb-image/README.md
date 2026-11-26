@@ -21,12 +21,19 @@ Nothing here can erase a drive. The image contains no erasure, trim, format or p
 ## Image layout
 
 ```text
-GPT  p1 ESP FAT32 "NEXTDRIVE" (1400 MiB)   EFI/BOOT/BOOTX64.EFI  = Debian shim (Microsoft-signed)
+GPT  p1 FAT32 "NEXWIPE" (1400 MiB)        EFI/BOOT/BOOTX64.EFI  = Debian shim (Microsoft-signed)
                                            EFI/BOOT/grubx64.efi  = Debian signed GRUB
                                            live/vmlinuz, live/initrd.img (Debian signed kernel, live-boot)
                                            live/filesystem.squashfs (read-only root)
+                                           .disk/nexwipe-stick   (marker GRUB finds the stick by)
      p2 ext4 "ND-STATE" (64 MiB)           /var/lib/nextdrive: encrypted station credential + metadata
 ```
+
+p1 is a Microsoft "basic data" partition (not an EFI System Partition) so Windows shows it as a normal drive and can
+run Start NexWipe from it; UEFI laptops still boot `\EFI\BOOT\BOOTX64.EFI` from it (same as Rufus sticks). p2 has GPT
+attributes "hidden" and "no drive letter" so Windows does not offer to format it. The normal boot entry copies the
+system into memory (`toram`), so pulling the stick does not stop a running session; the diagnostics entry runs from
+the stick for laptops with little memory. `check-layout.sh` checks all of this at the end of every build.
 
 UEFI only. Secure Boot works with the stock Microsoft UEFI CA (shim → GRUB → kernel are all signed by Debian). Legacy BIOS boot is not supported.
 
@@ -70,7 +77,7 @@ Writing the image **overwrites everything on the USB stick**. Use a **dedicated*
 3. Write:
    - Linux: `lsblk` to find the stick (e.g. `/dev/sdX`), then `sudo dd if=nexwipe-…-production.img of=/dev/sdX bs=4M conv=fsync status=progress`
    - Windows/macOS: balenaEtcher, or Rufus in "DD image" mode.
-4. Re-insert the stick and check it shows a `NEXTDRIVE` partition. Label it physically ("NexWipe station #…").
+4. Re-insert the stick and check it shows a `NEXWIPE` drive (and no "format disk" message). Label it physically ("NexWipe station #…").
 
 Do the writing on your own computer, never on a laptop under test.
 

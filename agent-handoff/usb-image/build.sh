@@ -2,8 +2,10 @@
 # NexWipe read-only station USB image builder.
 #
 # Produces build/nexwipe-station-readonly-<version>.img: a GPT disk image with
-#   p1  ESP (FAT32)  : signed shim + signed GRUB + Debian kernel/initrd + live/filesystem.squashfs
-#   p2  ND-STATE ext4: station credential and metadata (the only writable area)
+#   p1  NEXWIPE FAT32 (Microsoft basic data, so Windows shows it and runs Start NexWipe from it; UEFI boots
+#       \EFI\BOOT\BOOTX64.EFI from it): signed shim + signed GRUB + Debian kernel/initrd + live/filesystem.squashfs
+#   p2  ND-STATE ext4: station credential and metadata; GPT attributes 62+63 (hidden, no drive letter) so
+#       Windows never offers to format it
 # Write it to a USB stick with dd/balenaEtcher (see README.md).
 #
 # Requirements (Debian 13 / Ubuntu 24.04 host, run as root):
@@ -106,7 +108,8 @@ cp "$ROOT/usr/lib/shim/shimx64.efi.signed" "$STAGE/EFI/BOOT/BOOTX64.EFI"
 cp "$ROOT/usr/lib/shim/mmx64.efi.signed" "$STAGE/EFI/BOOT/mmx64.efi"
 cp "$ROOT/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed" "$STAGE/EFI/BOOT/grubx64.efi"
 for d in EFI/BOOT EFI/debian boot/grub; do cp "$HERE/grub.cfg" "$STAGE/$d/grub.cfg"; done
-mkdir -p "$STAGE/.disk"; echo "NexWipe read-only station ${VERSION}-${VARIANT}" > "$STAGE/.disk/info"
+mkdir -p "$STAGE/.disk"; : > "$STAGE/.disk/nexwipe-stick"  # grub.cfg finds the stick by this file
+echo "NexWipe read-only station ${VERSION}-${VARIANT}" > "$STAGE/.disk/info"
 ( cd "$STAGE" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS )
 
 log "Assembling GPT disk image"
@@ -114,10 +117,10 @@ rm -f "$IMG" "$OUT/esp.fat" "$OUT/state.ext4"
 TOTAL_MB=$((ESP_MB + STATE_MB + 2))
 truncate -s "${TOTAL_MB}M" "$IMG"
 sgdisk --clear --disk-guid=4E445354-0000-4000-8000-000000000001 \
-  -n 1:2048:+${ESP_MB}M -t 1:EF00 -c 1:"NEXTDRIVE" -u 1:4E445354-0000-4000-8000-0000000000E1 \
-  -n 2:0:+${STATE_MB}M -t 2:8300 -c 2:"ND-STATE" -u 2:4E445354-0000-4000-8000-0000000000E2 "$IMG" >/dev/null
+  -n 1:2048:+${ESP_MB}M -t 1:0700 -c 1:"NEXWIPE" -u 1:4E445354-0000-4000-8000-0000000000E1 \
+  -n 2:0:+${STATE_MB}M -t 2:8300 -c 2:"ND-STATE" -u 2:4E445354-0000-4000-8000-0000000000E2 -A 2:set:62 -A 2:set:63 "$IMG" >/dev/null
 truncate -s "${ESP_MB}M" "$OUT/esp.fat"
-mkfs.vfat -F 32 -n NEXTDRIVE -i 4E445354 "$OUT/esp.fat" >/dev/null
+mkfs.vfat -F 32 -n NEXWIPE -i 4E445354 "$OUT/esp.fat" >/dev/null
 ( cd "$STAGE" && mcopy -s -i "$OUT/esp.fat" -m ./* ./.disk ::/ )
 truncate -s "${STATE_MB}M" "$OUT/state.ext4"
 E2FSPROGS_FAKE_TIME="$SOURCE_DATE_EPOCH" mke2fs -q -t ext4 -L ND-STATE -U 4e445354-0000-4000-8000-0000000057a7 -E root_owner=0:0 "$OUT/state.ext4"
@@ -131,4 +134,5 @@ log "Checksums"
 ( cd "$OUT" && sha256sum "$(basename "$IMG")" > "$(basename "$IMG").sha256" && cat "$(basename "$IMG").sha256" )
 sha256sum "$STAGE/live/filesystem.squashfs" "$STAGE/live/vmlinuz" "$STAGE/live/initrd.img" | sed "s#$STAGE/##" > "$OUT/components.sha256"
 cat "$OUT/components.sha256"
+"$HERE/check-layout.sh" "$IMG"
 log "Done: $IMG"

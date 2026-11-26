@@ -199,7 +199,9 @@ def physical_ancestor(devpath: str) -> Optional[str]:
     return "/".join(parts[: idx[-1] + 1]) if idx else None
 
 
-def find_boot_medium(s: Sys, mountpoints=("/run/live/medium", "/lib/live/mount/medium", "/run/initramfs/live")) -> dict:
+# /var/lib/nextdrive is the stick's own ND-STATE section: after booting with toram the live medium is unmounted,
+# but the state section stays mounted, so it still identifies the boot stick.
+def find_boot_medium(s: Sys, mountpoints=("/run/live/medium", "/lib/live/mount/medium", "/run/initramfs/live", "/var/lib/nextdrive")) -> dict:
     devnum = _mount_devnum(s, mountpoints)
     if not devnum:
         return {"disk": None, "ancestor": None, "method": "not_found"}

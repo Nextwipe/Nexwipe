@@ -64,6 +64,9 @@ def build(root, *, vendor="Dell Inc.", product="Latitude 5420", version="", seri
     w(root, f"{b}/sdb1/partition", "1")
     w(root, f"{b}/sdb1/dev", "8:17")
     link(root, "/sys/dev/block/8:17", f"{b}/sdb1")
+    w(root, f"{b}/sdb2/partition", "2")
+    w(root, f"{b}/sdb2/dev", "8:18")
+    link(root, "/sys/dev/block/8:18", f"{b}/sdb2")
     w(root, "/run/udev/data/b8:16", "E:ID_SERIAL_SHORT=4C530001234567\nE:ID_MODEL=Ultra\n")
     disk(root, f"{usb}/6:0:0:1", "sdc", "8:32", 0, removable="1")
     # Unrelated USB stick in another port
@@ -73,7 +76,9 @@ def build(root, *, vendor="Dell Inc.", product="Latitude 5420", version="", seri
     # Loop device for the squashfs (must be ignored)
     os.makedirs(os.path.join(root, "sys/block/loop0"), exist_ok=True)
     mi = "22 1 0:21 / / rw - overlay overlay rw\n"
-    if mount_boot:
+    if mount_boot == "toram":  # boot section released after copy to RAM; only ND-STATE stays mounted
+        mi += "31 22 8:18 / /var/lib/nextdrive rw,noatime - ext4 /dev/sdb2 rw\n"
+    elif mount_boot:
         mi += "30 22 8:17 / /run/live/medium ro,noatime - vfat /dev/sdb1 ro\n"
     w(root, "/proc/self/mountinfo", mi)
 
@@ -127,6 +132,12 @@ class Discovery(unittest.TestCase):
         other = d["OTHERSTICK01"]
         self.assertFalse(other["is_boot_medium"])
         self.assertTrue(other["removable"])
+        self.assertEqual(p["station"]["boot_medium_serial"], "4C530001234567")
+
+    def test_boot_medium_found_after_toram(self):
+        build(self.root, mount_boot="toram")
+        p = discovery.discover(self.root, fake_run)
+        self.assertEqual(p["_boot_detection"]["disk"], "sdb")
         self.assertEqual(p["station"]["boot_medium_serial"], "4C530001234567")
 
     def test_boot_medium_not_guessed_by_name(self):
