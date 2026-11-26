@@ -139,7 +139,7 @@ export function PrepareUsbStick({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Prepare USB stick</DialogTitle>
           <DialogDescription>
