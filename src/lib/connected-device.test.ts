@@ -316,9 +316,10 @@ describe("helperRunsSuite", () => {
 });
 
 describe("helperAtLeast (Restart into NexWipe)", () => {
-  it("needs 0.7.0 or newer, so old sticks never restart without pausing BitLocker", () => {
+  it("needs 0.7.1 or newer (own start-up entry, BitLocker pause)", () => {
     expect(helperAtLeast("0.6.2-win", RESTART_MIN_HELPER)).toBe(false);
-    expect(helperAtLeast("0.7.0-win", RESTART_MIN_HELPER)).toBe(true);
+    expect(helperAtLeast("0.7.0-win", RESTART_MIN_HELPER)).toBe(false);
+    expect(helperAtLeast("0.7.1-win", RESTART_MIN_HELPER)).toBe(true);
     expect(helperAtLeast("0.10.0-win", RESTART_MIN_HELPER)).toBe(true);
     expect(helperAtLeast(null, RESTART_MIN_HELPER)).toBe(false);
   });

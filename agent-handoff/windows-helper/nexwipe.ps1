@@ -18,7 +18,7 @@
 param([switch]$DryRun, [switch]$SelfTest, [string]$Out = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "0.7.0-win"
+$VERSION = "0.7.1-win"
 $API = "/api/public/agent/v1"
 $HEARTBEAT_SECONDS = 5
 $Culture = [Globalization.CultureInfo]::InvariantCulture
@@ -31,6 +31,14 @@ $Allowed = @(
   @{ exe = "netsh";    rx = '^wlan add profile filename=.{1,260} user=current$' },
   @{ exe = "netsh";    rx = '^wlan connect name=.{1,32}$' },
   @{ exe = "bcdedit";  rx = '^/enum firmware$' },
+  # NexWipe's own one-time start-up entry: a copy of the Windows Boot Manager entry named "NexWipe USB stick", pointed
+  # at the stick's standard UEFI start file. Only ids in {\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}} form: {bootmgr}/{current}/{default} never match.
+  @{ exe = "bcdedit";  rx = '^/enum all$' },
+  @{ exe = "bcdedit";  rx = '^/copy \{bootmgr\} /d NexWipe USB stick$' },
+  @{ exe = "bcdedit";  rx = '^/set \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} device partition=[A-Z]:$' },
+  @{ exe = "bcdedit";  rx = '^/set \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} path \\EFI\\BOOT\\BOOTX64\.EFI$' },
+  @{ exe = "bcdedit";  rx = '^/set \{fwbootmgr\} displayorder \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} /remove$' },
+  @{ exe = "bcdedit";  rx = '^/delete \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$' },
   @{ exe = "bcdedit";  rx = '^/enum \{current\}$' },
   @{ exe = "bcdedit";  rx = '^/set \{fwbootmgr\} bootsequence \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$' },
   # BitLocker: pause protection for exactly ONE restart (what Windows Update does). Never turns BitLocker off.
@@ -119,29 +127,46 @@ function Get-BatteryHealth($design, $full) {
   return [Math]::Round(($full / $design) * 100, 1)
 }
 
-# Pick this stick's entry from "bcdedit /enum firmware". The labels are translated on non-English
-# Windows, so only GUIDs and device names are used. Returns @{ guid; text } or $null.
-function Find-UsbBootEntry([string]$text, [string]$stickModel) {
-  $blocks = [regex]::Split($text, '(\r?\n){2,}') | Where-Object { $_ -match '\{[0-9a-fA-F\-]{36}\}' }
-  $cands = @()
-  foreach ($b in $blocks) {
-    if ($b -match '\{bootmgr\}|\{fwbootmgr\}|Windows Boot Manager') { continue }
-    if ($b -match '(?i)usb|removable|uefi:\s') {
-      $g = [regex]::Match($b, '\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}').Value
-      if ($g) { $cands += @{ guid = $g; text = $b.Trim() } }
-    }
+# NexWipe's own one-time start-up entry. Laptops (Dell, HP, ...) do not keep a saved start-up entry for a USB stick;
+# they look for sticks only while starting (the F12 menu). So NexWipe adds its own entry that points at the stick's
+# standard UEFI start file, starts from it ONCE (BootNext; the permanent order is unchanged) and removes it the next
+# time it runs in Windows. If that one start fails, the firmware simply starts Windows.
+$NexWipeEntryName = "NexWipe USB stick"
+
+function Get-FirstGuid([string]$text) {
+  return [regex]::Match($text, '\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}').Value
+}
+
+# Ids of entries named exactly "NexWipe USB stick" in bcdedit output. Labels are translated; our name is not.
+function Get-NexWipeEntries([string]$text) {
+  $ids = @()
+  foreach ($b in [regex]::Split($text, '(?:\r?\n){2,}')) {
+    if ($b -notmatch ('(?m)\s' + [regex]::Escape($NexWipeEntryName) + '\s*$')) { continue }
+    $g = Get-FirstGuid $b
+    if ($g) { $ids += $g }
   }
-  if ($cands.Count -eq 0) { return $null }
-  $word = ""
-  if ($stickModel) {
-    $word = @(($stickModel -split '\s+') | Where-Object { $_.Length -ge 3 -and $_ -notmatch '(?i)^(usb|device|disk|flash|drive)$' })[0]
+  return $ids
+}
+
+function Remove-NexWipeEntries {
+  try { $all = Invoke-Tool "bcdedit" @("/enum", "all") } catch { return }
+  foreach ($g in @(Get-NexWipeEntries $all.text)) { try { [void](Invoke-Tool "bcdedit" @("/delete", $g)) } catch {} }
+}
+
+# Creates the entry for the stick at drive $letter and makes it the next start. Returns $null or why it failed.
+function Set-NexWipeStartOnce([string]$letter) {
+  Remove-NexWipeEntries
+  $c = Invoke-Tool "bcdedit" @("/copy", "{bootmgr}", "/d", $NexWipeEntryName)
+  $g = Get-FirstGuid $c.text
+  if ($c.code -ne 0 -or -not $g) { return "could not create the start-up entry: $($c.text.Trim())" }
+  foreach ($argv in @(@("/set", $g, "device", "partition=$letter"), @("/set", $g, "path", "\EFI\BOOT\BOOTX64.EFI"))) {
+    $r = Invoke-Tool "bcdedit" $argv
+    if ($r.code -ne 0) { Remove-NexWipeEntries; return "could not point the start-up entry at the stick: $($r.text.Trim())" }
   }
-  if ($word) {
-    $named = @($cands | Where-Object { $_.text -match [regex]::Escape($word) })
-    if ($named.Count -eq 1) { return $named[0] }
-  }
-  if ($cands.Count -eq 1) { return $cands[0] }
-  return $null  # ambiguous: never guess which device to boot
+  try { [void](Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "displayorder", $g, "/remove")) } catch {}  # keep the permanent order
+  $r = Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "bootsequence", $g)
+  if ($r.code -ne 0) { Remove-NexWipeEntries; return "the laptop refused a one-time start from the stick: $($r.text.Trim())" }
+  return $null
 }
 
 # ============================================================== JSON (works on PowerShell 2.0)
@@ -217,7 +242,6 @@ function Invoke-SelfTest {
   Check "allows one-time boot of a firmware entry" (Test-Allowed "bcdedit" @("/set", "{fwbootmgr}", "bootsequence", "{0a1b2c3d-1111-2222-3333-444455556666}"))
   Check "refuses changing the Windows boot entry" (-not (Test-Allowed "bcdedit" @("/set", "{current}", "bootsequence", "{0a1b2c3d-1111-2222-3333-444455556666}")))
   Check "refuses permanent boot order changes" (-not (Test-Allowed "bcdedit" @("/set", "{fwbootmgr}", "displayorder", "{0a1b2c3d-1111-2222-3333-444455556666}")))
-  Check "refuses bcdedit /delete" (-not (Test-Allowed "bcdedit" @("/delete", "{0a1b2c3d-1111-2222-3333-444455556666}")))
   Check "refuses diskpart" (-not (Test-Allowed "diskpart" @("/s", "x.txt")))
   Check "refuses format" (-not (Test-Allowed "format" @("C:")))
   Check "refuses cipher /w" (-not (Test-Allowed "cipher" @("/w:C:\")))
@@ -260,16 +284,21 @@ function Invoke-SelfTest {
   Check "RAID bus is unsupported" ((Get-InterfaceFromBus 8 4) -eq "unsupported_other")
   Check "battery health" ((Get-BatteryHealth 68000 51340) -eq 75.5 -and $null -eq (Get-BatteryHealth 0 10))
   Check "VM names detected" ("Microsoft Corporation Virtual Machine" -match $VirtualRx -and "QEMU Standard PC" -match $VirtualRx -and -not ("Dell Inc. Latitude 5490" -match $VirtualRx))
-  # firmware boot entries (English and German output)
-  $en = "Firmware Boot Manager`r`n--------------------`r`nidentifier              {fwbootmgr}`r`ndisplayorder            {bootmgr}`r`n`r`nWindows Boot Manager`r`n--------------------`r`nidentifier              {bootmgr}`r`n`r`nFirmware Application (101fffff)`r`n-------------------------------`r`nidentifier              {11111111-2222-3333-4444-555555555555}`r`ndescription             UEFI: SanDisk Cruzer Blade 1.00`r`n`r`nFirmware Application (101fffff)`r`n-------------------------------`r`nidentifier              {99999999-8888-7777-6666-555555555555}`r`ndescription             UEFI: IPV4 Intel(R) Ethernet`r`n"
-  $e = Find-UsbBootEntry $en "SanDisk Cruzer Blade USB Device"
-  Check "finds the stick's firmware entry" ($e -and $e.guid -eq "{11111111-2222-3333-4444-555555555555}")
-  $de = "Firmware-Start-Manager`r`n-----------------`r`nBezeichner              {fwbootmgr}`r`n`r`nFirmwareanwendung (101fffff)`r`n-----------------`r`nBezeichner              {11111111-2222-3333-4444-555555555555}`r`nBeschreibung            USB HDD: Kingston DataTraveler`r`n"
-  $e = Find-UsbBootEntry $de "Kingston DataTraveler 3.0 USB Device"
-  Check "works on German Windows" ($e -and $e.guid -eq "{11111111-2222-3333-4444-555555555555}")
-  $two = "Firmware Application`r`n---`r`nidentifier {11111111-2222-3333-4444-555555555555}`r`ndescription USB HDD: Generic`r`n`r`nFirmware Application`r`n---`r`nidentifier {22222222-2222-3333-4444-555555555555}`r`ndescription USB HDD: Generic`r`n"
-  Check "two unnamed USB entries: refuses to guess" ($null -eq (Find-UsbBootEntry $two "SanDisk Ultra USB Device"))
-  Check "no USB entry: returns nothing" ($null -eq (Find-UsbBootEntry "Windows Boot Manager`r`nidentifier {bootmgr}" "SanDisk"))
+  # NexWipe's own one-time start-up entry (English and German bcdedit output; labels are translated, our name is not)
+  $g1 = "{11111111-2222-3333-4444-555555555555}"; $g2 = "{22222222-2222-3333-4444-555555555555}"
+  $en = "Windows Boot Manager`r`n--------------------`r`nidentifier              {bootmgr}`r`ndescription             Windows Boot Manager`r`n`r`nWindows Boot Manager`r`n--------------------`r`nidentifier              $g1`r`ndevice                  partition=E:`r`npath                    \EFI\BOOT\BOOTX64.EFI`r`ndescription             NexWipe USB stick`r`n`r`nWindows Boot Loader`r`n-------------------`r`nidentifier              {current}`r`ndescription             Windows 10`r`n"
+  $de = "Windows-Start-Manager`r`n--------------------`r`nBezeichner              $g2`r`nBeschreibung            NexWipe USB stick`r`n`r`nWindows-Start-Manager`r`n--------------------`r`nBezeichner              {bootmgr}`r`nBeschreibung            Windows Boot Manager`r`n"
+  Check "finds only NexWipe's own entry" ((@(Get-NexWipeEntries $en) -join ",") -eq $g1)
+  Check "finds it on German Windows" ((@(Get-NexWipeEntries $de) -join ",") -eq $g2)
+  Check "never picks the Windows entries" (@(Get-NexWipeEntries "Windows Boot Manager`r`nidentifier {bootmgr}`r`ndescription Windows Boot Manager").Count -eq 0)
+  Check "reads the new entry's id from /copy (any language)" ((Get-FirstGuid "Der Eintrag wurde erfolgreich in $g1 kopiert.") -eq $g1)
+  Check "allows creating NexWipe's entry" (Test-Allowed "bcdedit" @("/copy", "{bootmgr}", "/d", "NexWipe USB stick"))
+  Check "refuses copying under another name" (-not (Test-Allowed "bcdedit" @("/copy", "{bootmgr}", "/d", "Windows")))
+  Check "allows pointing an entry at a drive letter" (Test-Allowed "bcdedit" @("/set", $g1, "device", "partition=E:"))
+  Check "allows only the standard stick start file" (Test-Allowed "bcdedit" @("/set", $g1, "path", "\EFI\BOOT\BOOTX64.EFI"))
+  Check "refuses other start files" (-not (Test-Allowed "bcdedit" @("/set", $g1, "path", "\Windows\system32\winload.efi")))
+  Check "refuses changing the Windows entries" (-not (Test-Allowed "bcdedit" @("/set", "{bootmgr}", "device", "partition=E:")) -and -not (Test-Allowed "bcdedit" @("/set", "{current}", "path", "\EFI\BOOT\BOOTX64.EFI")))
+  Check "refuses deleting the Windows entries" (-not (Test-Allowed "bcdedit" @("/delete", "{bootmgr}")) -and -not (Test-Allowed "bcdedit" @("/delete", "{current}")))
   if ($script:fails -gt 0) { Write-Host "$script:fails check(s) failed" -ForegroundColor Red; exit 1 }
   Write-Host "All checks passed" -ForegroundColor Green
   exit 0
@@ -764,19 +793,12 @@ function Invoke-RebootToUsb($stick) {
   }
   if (-not $stick) {
     Send-ActionResult $false "Program is not running from a USB stick"
-    Say "Run NexWipe from the USB stick to use Reboot into NexWipe." "Red"
+    Say "Run NexWipe from the USB stick to use Restart into NexWipe." "Red"
     return
   }
   if (-not (Test-Path (Join-Path $Here "EFI\BOOT\BOOTX64.EFI"))) {
     Send-ActionResult $false "This stick can't start the laptop. Prepare it with Prepare USB stick (step 1: boot image)"
     Say "This stick can't start the laptop: it has no NexWipe boot system. Prepare it with Prepare USB stick, step 1." "Red"
-    return
-  }
-  try { $fw = Invoke-Tool "bcdedit" @("/enum", "firmware") } catch { Send-ActionResult $false "Could not read firmware boot entries"; Say $_.Exception.Message "Red"; return }
-  $entry = Find-UsbBootEntry $fw.text $stick.model
-  if (-not $entry) {
-    Send-ActionResult $false "No unique USB boot entry for the stick; use the boot menu key (Dell/Lenovo F12, HP F9)"
-    Say "The firmware has no clear boot entry for this stick. Restart and press the boot menu key (Dell/Lenovo F12, HP F9)." "Red"
     return
   }
   # Someone at the laptop can stop this. If nobody can answer the console, do not restart.
@@ -795,6 +817,10 @@ function Invoke-RebootToUsb($stick) {
     }
   }
   Write-Host ""
+  # One-time start from NexWipe's own entry (BootNext): the permanent start-up order is not changed.
+  $why = $null
+  try { $why = Set-NexWipeStartOnce $Here.Substring(0, 2).ToUpperInvariant() } catch { $why = $_.Exception.Message }
+  if ($why) { Send-ActionResult $false (Cap "Not restarted: $why" 300); Say "Not restarted: $why" "Red"; return }
   # BitLocker on the Windows drive: pause it for this one restart, or the laptop stops at the recovery-key screen.
   # It turns itself back on at the next Windows start. If the pause fails, do not restart.
   $sys = ([string]$env:SystemDrive).ToUpperInvariant()
@@ -803,16 +829,14 @@ function Invoke-RebootToUsb($stick) {
     $bde = $null
     try { $bde = Invoke-Tool "manage-bde" @("-protectors", "-disable", $sys, "-RebootCount", "1") } catch {}
     if (-not $bde -or $bde.code -ne 0) {
+      Remove-NexWipeEntries  # no restart, so no one-time start either
       Send-ActionResult $false "Could not pause BitLocker for the restart; not restarting (the laptop would ask for its recovery key)"
       Say "Could not pause BitLocker, so NOT restarting (the laptop would ask for its recovery key)." "Red"
       return
     }
     Say "BitLocker paused for this one restart; it turns itself back on when Windows starts again." "Gray"
   }
-  # One-time boot (BootNext): the permanent boot order is not changed.
-  $set = Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "bootsequence", $entry.guid)
-  if ($set.code -ne 0) { Send-ActionResult $false (Cap "bcdedit failed: $($set.text)" 300); Say "Could not set the one-time boot entry: $($set.text)" "Red"; return }
-  Send-ActionResult $true "One-time boot set; restarting in 10 s"
+  Send-ActionResult $true "One-time start from the stick set; restarting in 10 s"
   [void](Invoke-Tool "shutdown" @("/r", "/t", "10", "/c", "NexWipe: restarting into the NexWipe USB stick"))
   Say "Restarting in 10 seconds." "Yellow"
 }
@@ -1025,6 +1049,7 @@ if ($DryRun) {
 }
 
 $script:Tls12 = Enable-Tls12
+Remove-NexWipeEntries  # the one-time entry from a previous "Restart into NexWipe" is not needed any more
 $setup = Read-JsonFile $SetupPath
 $state = Read-JsonFile $StatePath
 $srv = Get-Field $state "server"; if (-not $srv) { $srv = Get-Field $setup "server" }

@@ -393,7 +393,13 @@ function ConnectedDevicePage() {
             <Tile
               icon={Power}
               label="Restart into NexWipe"
-              sub={restartOldHelper ? "Prepare stick again" : restartPending ? "Sent…" : undefined}
+              sub={
+                restartOldHelper
+                  ? `Stick has ${(ag?.agent_version ?? "an old version").replace(/-win$/, "")}, needs ${RESTART_MIN_HELPER}: prepare it again`
+                  : restartPending
+                    ? "Sent…"
+                    : undefined
+              }
               disabled={!canStickAct || position === "moved" || restartPending || restartOldHelper}
               onClick={() => guard(() => setConfirmRestart(true))}
             />
