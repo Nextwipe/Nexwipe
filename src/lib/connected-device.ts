@@ -103,10 +103,11 @@ export function helperRunsSuite(version: string | null | undefined): boolean {
 }
 
 /**
- * Restart into NexWipe needs 0.7.1+: it adds its own one-time start-up entry for the stick (laptops keep none for
- * USB sticks), pauses BitLocker for that one restart and refuses a stick that cannot boot.
+ * Restart into NexWipe needs 0.7.2+: it writes its own UEFI start-up entry for the stick (laptops keep none for USB
+ * sticks; 0.7.1's copy of the Windows entry still started Windows), pauses BitLocker for that one restart and refuses
+ * a stick that cannot boot.
  */
-export const RESTART_MIN_HELPER = "0.7.1";
+export const RESTART_MIN_HELPER = "0.7.2";
 
 export function helperAtLeast(version: string | null | undefined, min: string): boolean {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");

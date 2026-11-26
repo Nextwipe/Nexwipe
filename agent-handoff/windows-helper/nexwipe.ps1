@@ -18,7 +18,7 @@
 param([switch]$DryRun, [switch]$SelfTest, [string]$Out = "")
 
 $ErrorActionPreference = "Stop"
-$VERSION = "0.7.1-win"
+$VERSION = "0.7.2-win"
 $API = "/api/public/agent/v1"
 $HEARTBEAT_SECONDS = 5
 $Culture = [Globalization.CultureInfo]::InvariantCulture
@@ -31,13 +31,8 @@ $Allowed = @(
   @{ exe = "netsh";    rx = '^wlan add profile filename=.{1,260} user=current$' },
   @{ exe = "netsh";    rx = '^wlan connect name=.{1,32}$' },
   @{ exe = "bcdedit";  rx = '^/enum firmware$' },
-  # NexWipe's own one-time start-up entry: a copy of the Windows Boot Manager entry named "NexWipe USB stick", pointed
-  # at the stick's standard UEFI start file. Only ids in {\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}} form: {bootmgr}/{current}/{default} never match.
+  # Only to remove leftover "NexWipe USB stick" copies made by helper 0.7.1 (ids in {GUID} form, never {bootmgr}/{current}).
   @{ exe = "bcdedit";  rx = '^/enum all$' },
-  @{ exe = "bcdedit";  rx = '^/copy \{bootmgr\} /d NexWipe USB stick$' },
-  @{ exe = "bcdedit";  rx = '^/set \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} device partition=[A-Z]:$' },
-  @{ exe = "bcdedit";  rx = '^/set \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} path \\EFI\\BOOT\\BOOTX64\.EFI$' },
-  @{ exe = "bcdedit";  rx = '^/set \{fwbootmgr\} displayorder \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\} /remove$' },
   @{ exe = "bcdedit";  rx = '^/delete \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$' },
   @{ exe = "bcdedit";  rx = '^/enum \{current\}$' },
   @{ exe = "bcdedit";  rx = '^/set \{fwbootmgr\} bootsequence \{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}$' },
@@ -127,17 +122,86 @@ function Get-BatteryHealth($design, $full) {
   return [Math]::Round(($full / $design) * 100, 1)
 }
 
-# NexWipe's own one-time start-up entry. Laptops (Dell, HP, ...) do not keep a saved start-up entry for a USB stick;
-# they look for sticks only while starting (the F12 menu). So NexWipe adds its own entry that points at the stick's
-# standard UEFI start file, starts from it ONCE (BootNext; the permanent order is unchanged) and removes it the next
-# time it runs in Windows. If that one start fails, the firmware simply starts Windows.
+# NexWipe's own one-time start-up entry, written straight into the laptop's UEFI settings (as Linux efibootmgr does):
+# entry Boot4E57 "NexWipe USB stick" -> the stick's partition (by its GPT id) -> \EFI\BOOT\BOOTX64.EFI, then
+# BootNext = 4E57 so the laptop starts from it ONCE. The permanent start-up order (BootOrder) is never written.
+# Why: laptops keep no saved entry for USB sticks, and a copy of the Windows entry (helper 0.7.1) still starts Windows.
 $NexWipeEntryName = "NexWipe USB stick"
+$NwBootVar = "Boot4E57"
+$NwBootNext = [byte[]](0x57, 0x4E)  # 0x4E57 little-endian
+
+function ConvertTo-LoadOption([string]$desc, [int]$partNo, [uint64]$startLba, [uint64]$sizeLba, [Guid]$partGuid, [string]$path) {
+  $u = [Text.Encoding]::Unicode
+  $file = $u.GetBytes($path + [char]0)
+  $dp = New-Object IO.MemoryStream; $w = New-Object IO.BinaryWriter($dp)
+  $w.Write([byte]4); $w.Write([byte]1); $w.Write([uint16]42)                  # hard drive media device path
+  $w.Write([uint32]$partNo); $w.Write([uint64]$startLba); $w.Write([uint64]$sizeLba)
+  $w.Write($partGuid.ToByteArray()); $w.Write([byte]2); $w.Write([byte]2)     # GPT, GUID signature
+  $w.Write([byte]4); $w.Write([byte]4); $w.Write([uint16](4 + $file.Length)); $w.Write($file)  # file path
+  $w.Write([byte]0x7F); $w.Write([byte]0xFF); $w.Write([uint16]4)             # end of device path
+  $w.Flush(); $dpBytes = $dp.ToArray()
+  $o = New-Object IO.MemoryStream; $x = New-Object IO.BinaryWriter($o)
+  $x.Write([uint32]1); $x.Write([uint16]$dpBytes.Length)                       # LOAD_OPTION_ACTIVE
+  $x.Write($u.GetBytes($desc + [char]0)); $x.Write($dpBytes); $x.Flush()
+  return ,$o.ToArray()
+}
+
+function Get-LoadOptionName([byte[]]$opt) {
+  if (-not $opt -or $opt.Length -lt 8) { return "" }
+  $end = 6; while ($end + 1 -lt $opt.Length -and -not ($opt[$end] -eq 0 -and $opt[$end + 1] -eq 0)) { $end += 2 }
+  return [Text.Encoding]::Unicode.GetString($opt, 6, $end - 6)
+}
+
+function Initialize-NwFirmware {
+  if ("NwFirmware" -as [type]) { return }
+  Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class NwFirmware {
+  const string Global = "{8BE4DF61-93CA-11D2-AA0D-00E098032B8C}";
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool SetFirmwareEnvironmentVariable(string name, string guid, byte[] value, uint size);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern uint GetFirmwareEnvironmentVariable(string name, string guid, byte[] buffer, uint size);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivilege state, uint len, IntPtr prev, IntPtr ret);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] struct TokenPrivilege { public uint Count; public long Luid; public uint Attr; }
+  public static int EnablePrivilege() {
+    IntPtr t; long luid;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x28, out t)) return Marshal.GetLastWin32Error();
+    if (!LookupPrivilegeValue(null, "SeSystemEnvironmentPrivilege", out luid)) return Marshal.GetLastWin32Error();
+    TokenPrivilege p = new TokenPrivilege(); p.Count = 1; p.Luid = luid; p.Attr = 2;
+    if (!AdjustTokenPrivileges(t, false, ref p, 0, IntPtr.Zero, IntPtr.Zero)) return Marshal.GetLastWin32Error();
+    return Marshal.GetLastWin32Error();  // 0 = enabled; 1300 = not held
+  }
+  public static int Set(string name, byte[] value) {
+    if (!SetFirmwareEnvironmentVariable(name, Global, value, value == null ? 0u : (uint)value.Length)) return Marshal.GetLastWin32Error();
+    return 0;
+  }
+  public static byte[] Get(string name) {
+    byte[] b = new byte[4096]; uint n = GetFirmwareEnvironmentVariable(name, Global, b, (uint)b.Length);
+    if (n == 0) return null; byte[] r = new byte[n]; Array.Copy(b, r, n); return r;
+  }
+}
+"@
+}
+
+# The only two firmware settings NexWipe may ever write: its own entry and the one-time BootNext.
+function Set-NwFirmwareVar([string]$name, [byte[]]$value) {
+  if ($name -ne $NwBootVar -and $name -ne "BootNext") { throw "Refused: NexWipe never writes the firmware setting '$name'." }
+  Initialize-NwFirmware
+  return [NwFirmware]::Set($name, $value)
+}
 
 function Get-FirstGuid([string]$text) {
   return [regex]::Match($text, '\{[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}').Value
 }
 
-# Ids of entries named exactly "NexWipe USB stick" in bcdedit output. Labels are translated; our name is not.
+# Ids of entries named exactly "NexWipe USB stick" in bcdedit output (helper 0.7.1 leftovers). Labels are translated.
 function Get-NexWipeEntries([string]$text) {
   $ids = @()
   foreach ($b in [regex]::Split($text, '(?:\r?\n){2,}')) {
@@ -148,24 +212,36 @@ function Get-NexWipeEntries([string]$text) {
   return $ids
 }
 
+# Removes NexWipe's one-time entry and 0.7.1's wrong copies. Never touches anything not named "NexWipe USB stick".
 function Remove-NexWipeEntries {
-  try { $all = Invoke-Tool "bcdedit" @("/enum", "all") } catch { return }
-  foreach ($g in @(Get-NexWipeEntries $all.text)) { try { [void](Invoke-Tool "bcdedit" @("/delete", $g)) } catch {} }
+  try { $all = Invoke-Tool "bcdedit" @("/enum", "all"); foreach ($g in @(Get-NexWipeEntries $all.text)) { [void](Invoke-Tool "bcdedit" @("/delete", $g)) } } catch {}
+  try {
+    Initialize-NwFirmware
+    [void][NwFirmware]::EnablePrivilege()
+    if ((Get-LoadOptionName ([NwFirmware]::Get($NwBootVar))) -eq $NexWipeEntryName) { [void](Set-NwFirmwareVar $NwBootVar $null) }
+  } catch {}
 }
 
-# Creates the entry for the stick at drive $letter and makes it the next start. Returns $null or why it failed.
-function Set-NexWipeStartOnce([string]$letter) {
+# Writes NexWipe's entry for the stick partition at $letter and makes it the next start. Returns $null or why not.
+function Set-NexWipeStartOnce([string]$letter, $stick) {
   Remove-NexWipeEntries
-  $c = Invoke-Tool "bcdedit" @("/copy", "{bootmgr}", "/d", $NexWipeEntryName)
-  $g = Get-FirstGuid $c.text
-  if ($c.code -ne 0 -or -not $g) { return "could not create the start-up entry: $($c.text.Trim())" }
-  foreach ($argv in @(@("/set", $g, "device", "partition=$letter"), @("/set", $g, "path", "\EFI\BOOT\BOOTX64.EFI"))) {
-    $r = Invoke-Tool "bcdedit" $argv
-    if ($r.code -ne 0) { Remove-NexWipeEntries; return "could not point the start-up entry at the stick: $($r.text.Trim())" }
-  }
-  try { [void](Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "displayorder", $g, "/remove")) } catch {}  # keep the permanent order
-  $r = Invoke-Tool "bcdedit" @("/set", "{fwbootmgr}", "bootsequence", $g)
-  if ($r.code -ne 0) { Remove-NexWipeEntries; return "the laptop refused a one-time start from the stick: $($r.text.Trim())" }
+  $ns = "root\Microsoft\Windows\Storage"
+  $p = $null
+  try { $p = @(Get-WmiObject -Namespace $ns -Class MSFT_Partition -Filter "DriveLetter='$($letter.Substring(0, 1))'" -ErrorAction Stop)[0] } catch {}
+  if (-not $p -or -not $p.Guid) { return "this Windows cannot describe the stick's partition (Windows 8 or newer needed); use the boot menu key" }
+  if ($stick -and [int]$p.DiskNumber -ne [int]$stick.index) { return "the start file is not on the USB stick" }
+  $sector = 512
+  try { $d = @(Get-WmiObject -Namespace $ns -Class MSFT_Disk -Filter "Number=$($p.DiskNumber)" -ErrorAction Stop)[0]; if ($d.LogicalSectorSize) { $sector = [int]$d.LogicalSectorSize } } catch {}
+  $opt = ConvertTo-LoadOption $NexWipeEntryName ([int]$p.PartitionNumber) ([uint64]$p.Offset / $sector) ([uint64]$p.Size / $sector) ([Guid]$p.Guid) "\EFI\BOOT\BOOTX64.EFI"
+  Initialize-NwFirmware
+  $priv = [NwFirmware]::EnablePrivilege()
+  if ($priv -ne 0) { return "Windows did not allow changing start-up settings (error $priv)" }
+  $existing = [NwFirmware]::Get($NwBootVar)
+  if ($existing -and (Get-LoadOptionName $existing) -ne $NexWipeEntryName) { return "start-up entry 4E57 belongs to something else; not touching it" }
+  $e = Set-NwFirmwareVar $NwBootVar $opt
+  if ($e -ne 0) { return "the laptop refused NexWipe's start-up entry (error $e)" }
+  $e = Set-NwFirmwareVar "BootNext" $NwBootNext
+  if ($e -ne 0) { [void](Set-NwFirmwareVar $NwBootVar $null); return "the laptop refused a one-time start from the stick (error $e)" }
   return $null
 }
 
@@ -291,13 +367,13 @@ function Invoke-SelfTest {
   Check "finds only NexWipe's own entry" ((@(Get-NexWipeEntries $en) -join ",") -eq $g1)
   Check "finds it on German Windows" ((@(Get-NexWipeEntries $de) -join ",") -eq $g2)
   Check "never picks the Windows entries" (@(Get-NexWipeEntries "Windows Boot Manager`r`nidentifier {bootmgr}`r`ndescription Windows Boot Manager").Count -eq 0)
-  Check "reads the new entry's id from /copy (any language)" ((Get-FirstGuid "Der Eintrag wurde erfolgreich in $g1 kopiert.") -eq $g1)
-  Check "allows creating NexWipe's entry" (Test-Allowed "bcdedit" @("/copy", "{bootmgr}", "/d", "NexWipe USB stick"))
-  Check "refuses copying under another name" (-not (Test-Allowed "bcdedit" @("/copy", "{bootmgr}", "/d", "Windows")))
-  Check "allows pointing an entry at a drive letter" (Test-Allowed "bcdedit" @("/set", $g1, "device", "partition=E:"))
-  Check "allows only the standard stick start file" (Test-Allowed "bcdedit" @("/set", $g1, "path", "\EFI\BOOT\BOOTX64.EFI"))
-  Check "refuses other start files" (-not (Test-Allowed "bcdedit" @("/set", $g1, "path", "\Windows\system32\winload.efi")))
-  Check "refuses changing the Windows entries" (-not (Test-Allowed "bcdedit" @("/set", "{bootmgr}", "device", "partition=E:")) -and -not (Test-Allowed "bcdedit" @("/set", "{current}", "path", "\EFI\BOOT\BOOTX64.EFI")))
+  $opt = ConvertTo-LoadOption "NexWipe USB stick" 1 2048 2867200 ([Guid]"4E445354-0000-4000-8000-0000000000E1") "\EFI\BOOT\BOOTX64.EFI"
+  Check "UEFI start-up entry bytes match the UEFI format" ((($opt | ForEach-Object { "{0:x2}" -f $_ }) -join "") -eq "010000005e004e006500780057006900700065002000550053004200200073007400690063006b00000004012a0001000000000800000000000000c02b00000000005453444e0000004080000000000000e10202040430005c004500460049005c0042004f004f0054005c0042004f004f0054005800360034002e0045004600490000007fff0400")
+  Check "reads the entry's name back" ((Get-LoadOptionName $opt) -eq "NexWipe USB stick")
+  Check "BootNext points at entry 4E57" ((($NwBootNext | ForEach-Object { "{0:x2}" -f $_ }) -join "") -eq "574e")
+  $refused = $false; try { [void](Set-NwFirmwareVar "BootOrder" ([byte[]](1, 0))) } catch { $refused = $_.Exception.Message -match 'Refused' }
+  Check "never writes the laptop's permanent start-up order" $refused
+  Check "refuses creating copies of the Windows entry" (-not (Test-Allowed "bcdedit" @("/copy", "{bootmgr}", "/d", "NexWipe USB stick")))
   Check "refuses deleting the Windows entries" (-not (Test-Allowed "bcdedit" @("/delete", "{bootmgr}")) -and -not (Test-Allowed "bcdedit" @("/delete", "{current}")))
   if ($script:fails -gt 0) { Write-Host "$script:fails check(s) failed" -ForegroundColor Red; exit 1 }
   Write-Host "All checks passed" -ForegroundColor Green
@@ -819,7 +895,7 @@ function Invoke-RebootToUsb($stick) {
   Write-Host ""
   # One-time start from NexWipe's own entry (BootNext): the permanent start-up order is not changed.
   $why = $null
-  try { $why = Set-NexWipeStartOnce $Here.Substring(0, 2).ToUpperInvariant() } catch { $why = $_.Exception.Message }
+  try { $why = Set-NexWipeStartOnce $Here.Substring(0, 2).ToUpperInvariant() $stick } catch { $why = $_.Exception.Message }
   if ($why) { Send-ActionResult $false (Cap "Not restarted: $why" 300); Say "Not restarted: $why" "Red"; return }
   # BitLocker on the Windows drive: pause it for this one restart, or the laptop stops at the recovery-key screen.
   # It turns itself back on at the next Windows start. If the pause fails, do not restart.
