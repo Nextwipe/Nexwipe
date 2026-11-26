@@ -9,7 +9,7 @@ Base URL: `https://<app-domain>/api/public/agent/v1`. All bodies are JSON (`cont
 | # | Purpose | Method + path | Auth | Changes job state |
 |---|---|---|---|---|
 | 1 | Liveness / clock | `GET /health` | none | no |
-| 2 | Enrollment | `POST /enroll` | single-use enrollment token in body | no |
+| 2 | Enrollment | `POST /enroll` | single-use enrollment token, or org stick key + stick id + part, in body | no |
 | 3 | Heartbeat | `POST /heartbeat` | station credential | may interrupt stale jobs (server sweep) |
 | 4 | Inventory discovery | `POST /inventory` | station credential | no |
 | 5 | Authorization retrieval | `GET /jobs` | station credential | no |

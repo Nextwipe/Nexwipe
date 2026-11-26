@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DiagnosticResultRequest, KEYBOARD_PASS_MIN_KEYS } from "./schemas";
+import { DiagnosticResultRequest, EnrollRequest, KEYBOARD_PASS_MIN_KEYS } from "./schemas";
 
 const keys = (n: number) => Array.from({ length: n }, (_, i) => `SC_${i.toString(16)}`);
 
@@ -145,5 +145,36 @@ describe("DiagnosticResultRequest: Windows helper decline", () => {
     expect(DiagnosticResultRequest.safeParse({ ...declined, outcome: "handoff" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("EnrollRequest: org stick key", () => {
+  const key = "ndstk_" + "a1".repeat(32);
+  const stick = { stick_key: key, stick_id: "0f".repeat(16), stick_part: "boot", name: "Stick" };
+
+  it("accepts a one-time enrollment token as before", () => {
+    expect(
+      EnrollRequest.safeParse({ enrollment_token: "ndenr_" + "0".repeat(48), name: "S" }).success,
+    ).toBe(true);
+  });
+  it("accepts a stick key with stick id and part", () => {
+    expect(EnrollRequest.safeParse({ ...stick, usb_serial: "4C530001" }).success).toBe(true);
+  });
+  it("refuses both a token and a stick key", () => {
+    expect(
+      EnrollRequest.safeParse({ ...stick, enrollment_token: "ndenr_" + "0".repeat(48) }).success,
+    ).toBe(false);
+  });
+  it("refuses neither", () => {
+    expect(EnrollRequest.safeParse({ name: "S" }).success).toBe(false);
+  });
+  it("refuses a malformed stick key, stick id or part", () => {
+    expect(EnrollRequest.safeParse({ ...stick, stick_key: "ndstk_short" }).success).toBe(false);
+    expect(EnrollRequest.safeParse({ ...stick, stick_id: "NOT-HEX" }).success).toBe(false);
+    expect(EnrollRequest.safeParse({ ...stick, stick_part: "linux" }).success).toBe(false);
+  });
+  it("refuses a stick key without a stick id", () => {
+    const { stick_id: _omit, ...noId } = stick;
+    expect(EnrollRequest.safeParse(noId).success).toBe(false);
   });
 });

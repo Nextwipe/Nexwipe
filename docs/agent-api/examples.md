@@ -15,6 +15,14 @@ curl -s -X POST $BASE/enroll -H 'content-type: application/json' \
 # 201 {"agent_id":"…","credential":"ndagt_…","heartbeat_interval_seconds":30}
 CRED=ndagt_…
 ```
+Org sticks use the org's multi-use stick key instead. `stick_id` is 32 random hex characters the stick creates on
+first use; `stick_part` is `windows` (helper) or `boot` (boot system). One stick record per `stick_id`; registering the
+same stick and part again revokes the previous credential. Wrong keys: 401; too many wrong keys from one address: 429.
+```bash
+curl -s -X POST $BASE/enroll -H 'content-type: application/json' \
+  -d '{"stick_key":"ndstk_…","stick_id":"9f2c…","stick_part":"boot","usb_serial":"4C53…","name":"NexWipe stick"}'
+# 201 {"agent_id":"…","credential":"ndagt_…","stick_id":"…","heartbeat_interval_seconds":30}
+```
 
 ## 2. Heartbeat and inventory
 ```bash

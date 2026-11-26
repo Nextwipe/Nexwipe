@@ -186,6 +186,37 @@ export async function handleAgentRequest(request: Request, splat: string): Promi
 
     if (method === "POST" && parts.length === 1 && parts[0] === "enroll") {
       const body = await readBody(request, EnrollRequest);
+      if (body.stick_key) {
+        // Org stick key: the SQL counts wrong keys per source and globally. The source is only a rate-limit
+        // bucket, never trusted for access; a forged header escapes the per-source limit but not the global one,
+        // and keys are 256-bit random, so guessing is not practical either way.
+        const source =
+          request.headers.get("cf-connecting-ip") ??
+          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+          "unknown";
+        const res = await rpc("agent_enroll_stick", {
+          _key: body.stick_key,
+          _stick_uid: body.stick_id,
+          _part: body.stick_part,
+          _usb_serial: body.usb_serial ?? null,
+          _name: body.name,
+          _version: body.agent_version ?? null,
+          _platform: body.platform ?? null,
+          _hostname: body.hostname ?? null,
+          _source: source,
+        });
+        if (res["ok"] === false) {
+          const status =
+            typeof res["http_status"] === "number" ? (res["http_status"] as number) : 401;
+          return json(status, { error: { code: res["error"], message: res["message"] } });
+        }
+        const { ok: _ok, ...enrolled } = res;
+        return json(201, {
+          ...enrolled,
+          api_version: AGENT_API_VERSION,
+          heartbeat_interval_seconds: 30,
+        });
+      }
       const result = await rpc("agent_enroll", {
         _token: body.enrollment_token,
         _name: body.name,

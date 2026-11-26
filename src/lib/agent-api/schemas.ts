@@ -17,13 +17,34 @@ const occurredAt = z.string().datetime({ offset: true }).optional();
 const shortText = (max: number) => z.string().trim().max(max);
 const count = z.number().int().min(0).max(10_000_000);
 
-export const EnrollRequest = z.object({
-  enrollment_token: z.string().min(10).max(200),
-  name: z.string().trim().min(1).max(100),
-  agent_version: shortText(40).optional(),
-  platform: shortText(80).optional(),
-  hostname: shortText(120).optional(),
-});
+/**
+ * Either a one-time enrollment token (`ndenr_…`) or an org stick key (`ndstk_…`) with the stick's own random id
+ * (created on the stick at first use) and which part of the stick is registering (Windows helper or boot system).
+ */
+export const EnrollRequest = z
+  .object({
+    enrollment_token: z.string().min(10).max(200).optional(),
+    stick_key: z
+      .string()
+      .regex(/^ndstk_[0-9a-f]{64}$/)
+      .optional(),
+    stick_id: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/)
+      .optional(),
+    stick_part: z.enum(["windows", "boot"]).optional(),
+    usb_serial: shortText(80).optional(),
+    name: z.string().trim().min(1).max(100),
+    agent_version: shortText(40).optional(),
+    platform: shortText(80).optional(),
+    hostname: shortText(120).optional(),
+  })
+  .refine(
+    (b) => (b.enrollment_token ? !b.stick_key : !!b.stick_key && !!b.stick_id && !!b.stick_part),
+    {
+      message: "Send either enrollment_token, or stick_key with stick_id and stick_part",
+    },
+  );
 
 export const HeartbeatRequest = z.object({
   state: z.enum(["idle", "busy", "reconciling"]).default("idle"),

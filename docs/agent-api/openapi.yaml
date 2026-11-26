@@ -53,16 +53,21 @@ paths:
   /enroll:
     post:
       security: []
-      summary: Exchange a single-use enrollment token for a per-agent credential
+      summary: Exchange a single-use enrollment token, or an org stick key, for a per-agent credential
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [enrollment_token, name]
+              description: Send enrollment_token, or stick_key with stick_id and stick_part (not both).
+              required: [name]
               properties:
                 enrollment_token: { type: string, example: ndenr_3f1c… }
+                stick_key: { type: string, pattern: "^ndstk_[0-9a-f]{64}$" }
+                stick_id: { type: string, pattern: "^[0-9a-f]{32}$", description: Random id the stick creates on first use }
+                stick_part: { type: string, enum: [windows, boot] }
+                usb_serial: { type: string, maxLength: 80, description: For display only }
                 name: { type: string, maxLength: 100 }
                 agent_version: { type: string, maxLength: 40 }
                 platform: { type: string, maxLength: 80 }
@@ -81,7 +86,9 @@ paths:
                   is_simulated: { type: boolean }
                   heartbeat_interval_seconds: { type: integer, example: 30 }
         "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
   /heartbeat:
     post:
       summary: Report liveness (every 30 s; 180 s without one interrupts active jobs)
