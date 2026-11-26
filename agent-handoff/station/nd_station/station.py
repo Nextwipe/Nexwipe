@@ -6,11 +6,10 @@ import json
 import os
 import threading
 import time
-import urllib.parse
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import VERSION, state
+from . import VERSION, safety, setup_file, state
 from .api import Api, ApiError, NetworkError
 from .discovery import discover, upload_payload
 from .netcheck import NetStatus, check
@@ -36,13 +35,7 @@ def load_config() -> dict:
     return cfg
 
 
-def validate_server(url: str, allow_http_hosts: list) -> str:
-    u = urllib.parse.urlparse(url.strip())
-    if u.scheme == "https" and u.hostname:
-        return f"https://{u.netloc}"
-    if u.scheme == "http" and u.hostname in (allow_http_hosts or []):
-        return f"http://{u.netloc}"  # test labs only (e.g. a VM talking to a dev server)
-    raise ValueError("Server address must start with https:// (for example https://nexwipe.example.com)")
+validate_server = setup_file.validate_server
 
 
 @dataclass
@@ -79,6 +72,11 @@ class Station:
         self._pending_diag: Optional[dict] = None  # ponytail: in memory only; a reboot before upload loses it
         self._stop = threading.Event()
         self._binding = ""
+        self.setup: Optional[dict] = None  # org setup file from the stick (Stick Writer); enables self-registration
+        self.stick_uid: Optional[str] = None
+        self._next_auto_enroll = 0.0
+        self._next_wifi_try = 0.0
+        self._read_setup()
         self.rescan()
         self._load()
 
@@ -98,9 +96,27 @@ class Station:
         with self.lock:
             return View(**{k: (list(v) if isinstance(v, list) else v) for k, v in self.v.__dict__.items()})
 
+    def _read_setup(self) -> None:
+        root = setup_file.find_root()
+        if not root:
+            return  # a stick without the org setup file: enroll by hand (E) as before
+        try:
+            self.setup = setup_file.load(root, self.cfg.get("allow_http_hosts", []))
+            if not self.cfg.get("server"):
+                self.cfg["server"] = self.setup["server"]
+                with self.lock:
+                    self.v.server = self.cfg["server"]
+            self.stick_uid = setup_file.stick_id(root)
+        except ValueError as e:
+            self.note(str(e), error=True)
+        except OSError:
+            self.note("This stick has not registered yet and its files are read-only in this mode. "
+                      "Restart and choose the normal NexWipe entry once.", error=True)
+
     def _load(self) -> None:
         boot_serial = self.v.discovery.get("station", {}).get("boot_medium_serial")
-        self._binding = state.binding_for(boot_serial)
+        # Bound to the stick's own random id when it has one (cloned sticks get their own); else the USB serial.
+        self._binding = state.binding_for(self.stick_uid or boot_serial)
         cred = state.load_credential(self._binding)
         meta = state.load_meta()
         if cred and self.cfg.get("server"):
@@ -130,14 +146,45 @@ class Station:
         token = token.strip()
         if not token.startswith("ndenr_"):
             raise ValueError("Enrollment tokens start with ndenr_. Create one in Agents & stations → Enrollment token.")
+        sysinfo = self.v.discovery.get("system", {})
+        try:
+            self._enroll({"enrollment_token": token}, name or sysinfo.get("serial", "station"))
+        except ApiError as e:
+            raise ValueError(f"Enrollment refused: {e.message}. Tokens are single-use and expire; create a new one if needed.") from None
+
+    def _auto_enroll(self) -> None:
+        """Register this stick with the org's stick key from the setup file (no typing at the laptop)."""
+        if not (self.setup and self.stick_uid) or time.monotonic() < self._next_auto_enroll:
+            return
+        self._next_auto_enroll = time.monotonic() + 60
+        boot_serial = self.v.discovery.get("station", {}).get("boot_medium_serial")
+        creds = {"stick_key": self.setup["stick_key"], "stick_id": self.stick_uid, "stick_part": "boot"}
+        if boot_serial:
+            creds["usb_serial"] = str(boot_serial)[:80]
+        try:
+            self._enroll(creds, f"NexWipe stick {self.stick_uid[:6]}")
+        except ApiError as e:
+            if e.status in (401, 403):
+                self._next_auto_enroll = float("inf")  # key revoked or stick blocked: retrying cannot help until restart
+            self.note(f"This stick could not register: {e.message}", error=True)
+        except ValueError as e:
+            self.note(str(e), error=True)
+
+    def _join_setup_wifi(self) -> None:
+        """No network: join the org's bench Wi-Fi from the setup file (cable always comes first by itself)."""
+        wifi = (self.setup or {}).get("wifi")
+        if not wifi or time.monotonic() < self._next_wifi_try:
+            return
+        self._next_wifi_try = time.monotonic() + 60
+        self.note(f"No network: joining Wi-Fi '{wifi['ssid']}' from this stick's setup.")
+        safety.run_read_only(setup_file.wifi_join_argv(wifi), timeout=45)
+
+    def _enroll(self, creds: dict, name: str) -> None:
         if not self.cfg.get("server"):
             raise ValueError("Set the server address first.")
         api = Api(self.cfg["server"], None, f"nd-station/{VERSION}")
-        sysinfo = self.v.discovery.get("system", {})
         try:
-            res = api.enroll(token, name or sysinfo.get("serial", "station"), VERSION, f"x86_64 {os.uname().release}"[:80], os.uname().nodename[:120])
-        except ApiError as e:
-            raise ValueError(f"Enrollment refused: {e.message}. Tokens are single-use and expire; create a new one if needed.") from None
+            res = api.enroll(creds, name, VERSION, f"x86_64 {os.uname().release}"[:80], os.uname().nodename[:120])
         except NetworkError as e:
             raise ValueError(f"Could not reach the server: {e}") from None
         how = state.save_credential(res["credential"], self._binding)
@@ -168,6 +215,10 @@ class Station:
         net = check(srv)  # network state always comes from the real system
         with self.lock:
             self.v.net = net
+        if not net.ok:
+            self._join_setup_wifi()
+        if net.ok and not self.api:
+            self._auto_enroll()
         if not net.ok or not self.api:
             return
         try:

@@ -56,8 +56,9 @@ class Api:
     def health(self) -> dict:
         return self._call("GET", "/health", auth=False)
 
-    def enroll(self, token: str, name: str, version: str, platform: str, hostname: str) -> dict:
-        return self._call("POST", "/enroll", {"enrollment_token": token, "name": name, "agent_version": version,
+    def enroll(self, creds: dict, name: str, version: str, platform: str, hostname: str) -> dict:
+        """creds: {"enrollment_token": …} or {"stick_key": …, "stick_id": …, "stick_part": "boot", "usb_serial": …}."""
+        return self._call("POST", "/enroll", {**creds, "name": name, "agent_version": version,
                                               "platform": platform, "hostname": hostname}, auth=False)
 
     def heartbeat(self, version: str) -> dict:

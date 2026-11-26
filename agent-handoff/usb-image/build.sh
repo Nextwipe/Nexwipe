@@ -82,7 +82,7 @@ json.dump(cfg, open(sys.argv[1], "w"), indent=2)
 PY
 echo "nextdrive-station" > "$ROOT/etc/hostname"
 echo "NEXTDRIVE_IMAGE=${VERSION}-${VARIANT} SNAPSHOT=${SNAPSHOT}" > "$ROOT/etc/nextdrive/image-release"
-in_root systemctl enable nd-console.service NetworkManager.service var-lib-nextdrive.mount >/dev/null
+in_root systemctl enable nd-console.service NetworkManager.service var-lib-nextdrive.mount run-nexwipe.mount >/dev/null
 in_root systemctl mask getty@tty1.service serial-getty@ttyS0.service autovt@.service >/dev/null 2>&1 || true
 in_root passwd -l root >/dev/null
 rm -f "$ROOT/etc/machine-id"; : > "$ROOT/etc/machine-id"

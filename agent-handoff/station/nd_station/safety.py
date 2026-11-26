@@ -21,6 +21,7 @@ ALLOWED = [
     ("ip", re.compile(r"-j (addr|route|link) show")),
     ("nmcli", re.compile(r"-t -f [A-Z,.-]+ (device|general|connection show --active)")),
     ("nmtui", re.compile(r"connect")),                       # interactive Wi-Fi setup
+    ("nmcli", re.compile(r"device wifi connect .{1,32}( password .{8,63})?")),  # bench Wi-Fi from the setup file
     ("timedatectl", re.compile(r"show -p NTPSynchronized --value")),
     # hardware test (hwtest.py)
     ("v4l2-ctl", re.compile(r"-d /dev/video\d+ --set-fmt-video=width=\d+,height=\d+,pixelformat=YUYV --get-fmt-video")),
