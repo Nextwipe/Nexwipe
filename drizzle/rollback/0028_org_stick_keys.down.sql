@@ -4,6 +4,8 @@ DROP FUNCTION IF EXISTS public.agent_enroll_stick(text, text, text, text, text, 
 DROP FUNCTION IF EXISTS public.disconnect_stick_key(uuid);
 DROP FUNCTION IF EXISTS public.revoke_stick_key(uuid);
 DROP FUNCTION IF EXISTS public.create_stick_key(uuid, text, timestamptz, integer);
+DROP TRIGGER IF EXISTS agents_block_stick ON public.agents;
+DROP FUNCTION IF EXISTS public._agents_block_stick();
 DROP INDEX IF EXISTS public.agents_stick_idx;
 ALTER TABLE public.agents DROP CONSTRAINT IF EXISTS agents_stick_fk;
 ALTER TABLE public.agents DROP CONSTRAINT IF EXISTS agents_stick_part_chk;

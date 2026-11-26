@@ -54,6 +54,18 @@ BEGIN
   SELECT status INTO st FROM public.agents WHERE id = (res->>'agent_id')::uuid;
   SELECT count(*) INTO n FROM public.sticks WHERE stick_key_id = kid;
   r := r || ' [reregister_revokes_old ' || CASE WHEN st = 'revoked' AND n = 1 THEN 'PASS' ELSE 'FAIL' END || ']';
+  r := r || ' [reregister_does_not_block ' || CASE WHEN (SELECT blocked_at FROM public.sticks WHERE stick_uid = u1) IS NULL THEN 'PASS' ELSE 'FAIL' END || ']';
+
+  -- An admin revokes one stick's station: that stick cannot come back by itself, other sticks can
+  PERFORM set_config('role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', ua, 'role','authenticated','aal','aal2')::text, true);
+  PERFORM public.revoke_agent((res2->>'agent_id')::uuid, 'Lost stick');
+  PERFORM set_config('role', 'service_role', true);
+  PERFORM set_config('request.jwt.claims', json_build_object('role','service_role')::text, true);
+  BEGIN PERFORM public.agent_enroll_stick(key, u1, 'windows', null, 'S', null, null, null, '10.0.0.1'); r := r || ' [revoked_stick_blocked FAIL]';
+  EXCEPTION WHEN others THEN r := r || ' [revoked_stick_blocked ' || CASE WHEN SQLSTATE = 'ND403' THEN 'PASS' ELSE 'FAIL:' || SQLERRM END || ']'; END;
+  BEGIN PERFORM public.agent_enroll_stick(key, u1, 'boot', null, 'S', null, null, null, '10.0.0.1'); r := r || ' [blocked_for_both_parts FAIL]';
+  EXCEPTION WHEN others THEN r := r || ' [blocked_for_both_parts PASS]'; END;
 
   -- max_sticks = 1: second stick refused, re-registering the first still allowed
   PERFORM public.agent_enroll_stick(key1, u2, 'boot', null, 'S', null, null, null, '10.0.0.2');
@@ -84,8 +96,7 @@ BEGIN
   r := r || ' [technician_sees_sticks ' || CASE WHEN n = 2 THEN 'PASS' ELSE 'FAIL' END || ']';
   PERFORM set_config('request.jwt.claims', json_build_object('sub', ua, 'role','authenticated','aal','aal2')::text, true);
   n := public.disconnect_stick_key(kid);
-  r := r || ' [disconnect_all ' || CASE WHEN n = 2 AND NOT EXISTS (SELECT 1 FROM public.agents a JOIN public.sticks s ON s.id = a.stick_id WHERE s.stick_key_id = kid AND a.status <> 'revoked') THEN 'PASS' ELSE 'FAIL:' || n END || ']';
-  PERFORM public.revoke_stick_key(kid);
+  r := r || ' [disconnect_all ' || CASE WHEN n = 1 AND (SELECT revoked_at FROM public.stick_keys WHERE id = kid) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.agents a JOIN public.sticks s ON s.id = a.stick_id WHERE s.stick_key_id = kid AND a.status <> 'revoked') THEN 'PASS' ELSE 'FAIL:' || n END || ']';
   PERFORM set_config('role', 'service_role', true);
   PERFORM set_config('request.jwt.claims', json_build_object('role','service_role')::text, true);
   res := public.agent_enroll_stick(key, u3, 'boot', null, 'S', null, null, null, '10.0.0.5');

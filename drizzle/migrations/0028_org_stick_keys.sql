@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS public.sticks (
   usb_serial text CHECK (usb_serial IS NULL OR char_length(usb_serial) <= 80),
   first_seen_at timestamptz NOT NULL DEFAULT now(),
   last_seen_at timestamptz NOT NULL DEFAULT now(),
+  blocked_at timestamptz,  -- a person revoked this stick: it may not register again (re-preparing gives a new id)
   UNIQUE (org_id, id),
   UNIQUE (org_id, stick_uid),
   FOREIGN KEY (org_id, stick_key_id) REFERENCES public.stick_keys(org_id, id) ON DELETE RESTRICT
@@ -51,6 +52,21 @@ ALTER TABLE public.agents ADD CONSTRAINT agents_stick_part_chk CHECK (stick_part
 ALTER TABLE public.agents DROP CONSTRAINT IF EXISTS agents_stick_fk;
 ALTER TABLE public.agents ADD CONSTRAINT agents_stick_fk FOREIGN KEY (org_id, stick_id) REFERENCES public.sticks(org_id, id) ON DELETE RESTRICT;
 CREATE INDEX IF NOT EXISTS agents_stick_idx ON public.agents(stick_id) WHERE stick_id IS NOT NULL;
+
+-- Sticks register themselves whenever they have no credential, so revoking a stick's station by a person (any path:
+-- revoke_agent, disconnect_stick_key) must also block the stick, or it would quietly come back on its next start.
+-- Revocations by the system (actor NULL, e.g. a stick registering again) do not block.
+CREATE OR REPLACE FUNCTION public._agents_block_stick()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE public.sticks SET blocked_at = coalesce(blocked_at, now()) WHERE org_id = NEW.org_id AND id = NEW.stick_id;
+  RETURN NULL;
+END $$;
+REVOKE EXECUTE ON FUNCTION public._agents_block_stick() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS agents_block_stick ON public.agents;
+CREATE TRIGGER agents_block_stick AFTER UPDATE OF status ON public.agents FOR EACH ROW
+  WHEN (NEW.status = 'revoked' AND OLD.status IS DISTINCT FROM 'revoked' AND NEW.stick_id IS NOT NULL AND NEW.revoked_by IS NOT NULL)
+  EXECUTE FUNCTION public._agents_block_stick();
 
 -- Failed stick-key attempts (no key material, only a hash of the source address). Service role only.
 CREATE TABLE IF NOT EXISTS public.stick_enroll_failures (
@@ -91,7 +107,7 @@ BEGIN
   UPDATE public.stick_keys SET revoked_at = now(), revoked_by = auth.uid() WHERE id = _key_id AND revoked_at IS NULL;
 END $$;
 
--- Revokes every station registered through this key (the key itself stays as it is). Returns how many.
+-- Revokes the key and every station registered through it (their sticks are blocked by the trigger). Returns how many.
 CREATE OR REPLACE FUNCTION public.disconnect_stick_key(_key_id uuid)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_org uuid; r record; n integer := 0;
@@ -105,6 +121,7 @@ BEGIN
     PERFORM public._revoke_agent(r.id, 'All sticks of this key disconnected', auth.uid());
     n := n + 1;
   END LOOP;
+  UPDATE public.stick_keys SET revoked_at = now(), revoked_by = auth.uid() WHERE id = _key_id AND revoked_at IS NULL;
   RETURN n;
 END $$;
 
@@ -148,6 +165,8 @@ BEGIN
     INSERT INTO public.sticks(org_id, stick_key_id, stick_uid, usb_serial)
     VALUES (v_k.org_id, v_k.id, _stick_uid, left(nullif(trim(_usb_serial), ''), 80))
     RETURNING * INTO v_stick;
+  ELSIF v_stick.blocked_at IS NOT NULL THEN
+    RAISE EXCEPTION 'This stick was disconnected by an administrator. Prepare it again with the Stick Writer to use it.' USING ERRCODE = 'ND403';
   ELSE
     UPDATE public.sticks SET last_seen_at = now(), usb_serial = coalesce(left(nullif(trim(_usb_serial), ''), 80), usb_serial)
       WHERE id = v_stick.id;
