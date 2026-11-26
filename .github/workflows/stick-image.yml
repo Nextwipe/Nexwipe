@@ -67,7 +67,9 @@ jobs:
           set -euo pipefail
           IMG=$(ls ./*.img.xz | head -1)
           VERSION="$(basename "$IMG" .img.xz | sed 's/^nexwipe-station-readonly-//')-${GITHUB_SHA::7}"
-          mkdir -p parts && split -b 32M -d -a 3 "$IMG" parts/part-
+          # the build folder belongs to root (sudo build), so the pieces go to the runner's temp folder
+          P="${RUNNER_TEMP:-/tmp}/stick-parts"; rm -rf "$P"; mkdir -p "$P"; IMG="$PWD/${IMG#./}"
+          cd "$P" && mkdir -p parts && split -b 32M -d -a 3 "$IMG" parts/part-
           python3 - "$IMG" "$VERSION" > parts/manifest.json <<'PY'
           import hashlib, json, os, sys
           img, version = sys.argv[1], sys.argv[2]
