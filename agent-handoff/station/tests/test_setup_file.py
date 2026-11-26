@@ -48,6 +48,12 @@ class SetupFileTests(unittest.TestCase):
         self.write({"server": "http://10.0.2.2:8080", "stick_key": KEY})
         self.assertEqual(setup_file.load(self.root, ["10.0.2.2"])["server"], "http://10.0.2.2:8080")
 
+    def test_load_without_stick_key_keeps_server(self):
+        # setup file from the current Prepare USB stick (one-time token for the Windows helper)
+        self.write({"server": "https://nexwipe.co", "enrollment_token": "ndenr_" + "0" * 48})
+        s = setup_file.load(self.root)
+        self.assertEqual((s["server"], s["stick_key"]), ("https://nexwipe.co", None))
+
     def test_load_rejects_bad_key_and_bad_wifi(self):
         for bad in ({"server": "https://x.co", "stick_key": "ndenr_123"},
                     {"server": "https://x.co", "stick_key": KEY, "wifi": {"ssid": "", "password": "secret123"}},

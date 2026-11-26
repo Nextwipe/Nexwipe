@@ -1,0 +1,27 @@
+# Makes an uploaded stick image build the one offered by "Download stick image" in Prepare USB stick.
+# Run it only after that build has booted in the virtual PC. The version is printed in the build run's summary.
+name: Promote NexWipe stick image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build version from the build run's summary, e.g. 0.3.0-readonly-production-95ae85f"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Promote
+        env:
+          STICK_UPLOAD_TOKEN: ${{ secrets.STICK_UPLOAD_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9A-Za-z._-]{1,80}$ ]] || { echo "Bad version"; exit 1; }
+          curl -sS --fail-with-body -X POST -H "authorization: Bearer $STICK_UPLOAD_TOKEN" \
+            "https://nexwipe.co/api/public/stick-image/promote/$VERSION"

@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  STICK_UPLOAD_TOKEN: ${{ secrets.STICK_UPLOAD_TOKEN }}
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -50,3 +53,32 @@ jobs:
             agent-handoff/usb-image/build/*.img.xz
             agent-handoff/usb-image/build/*.sha256
             agent-handoff/usb-image/build/installed-packages.txt
+
+      # Upload to the app's private storage (bucket artifacts, folder stick-image/) through our own upload door.
+      # Only main builds, and only when the STICK_UPLOAD_TOKEN secret is set. The build becomes the one offered by
+      # "Download stick image" only after the separate "Promote NexWipe stick image" workflow is run for it.
+      - name: Upload to NexWipe storage (candidate)
+        if: github.ref == 'refs/heads/main' && env.STICK_UPLOAD_TOKEN != ''
+        env:
+          STICK_UPLOAD_TOKEN: ${{ secrets.STICK_UPLOAD_TOKEN }}
+          NEXWIPE_URL: https://nexwipe.co
+        working-directory: agent-handoff/usb-image/build
+        run: |
+          set -euo pipefail
+          IMG=$(ls ./*.img.xz | head -1)
+          VERSION="$(basename "$IMG" .img.xz | sed 's/^nexwipe-station-readonly-//')-${GITHUB_SHA::7}"
+          mkdir -p parts && split -b 32M -d -a 3 "$IMG" parts/part-
+          python3 - "$IMG" "$VERSION" > parts/manifest.json <<'PY'
+          import hashlib, json, os, sys
+          img, version = sys.argv[1], sys.argv[2]
+          h = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+          parts = sorted(n for n in os.listdir("parts") if n.startswith("part-"))
+          print(json.dumps({"version": version, "file": f"nexwipe-stick-{version}.img.xz", "size": os.path.getsize(img),
+                            "sha256": h(img), "parts": [{"name": n, "size": os.path.getsize(f"parts/{n}"),
+                            "sha256": h(f"parts/{n}")} for n in parts]}))
+          PY
+          for f in parts/part-* parts/manifest.json; do
+            curl -sS --fail-with-body --retry 3 --retry-all-errors -X PUT -H "authorization: Bearer $STICK_UPLOAD_TOKEN" \
+              --data-binary "@$f" "$NEXWIPE_URL/api/public/stick-image/upload/$VERSION/$(basename "$f")"; echo
+          done
+          echo "Uploaded candidate $VERSION. To offer it in Prepare USB stick: Actions -> Promote NexWipe stick image -> Run workflow -> $VERSION" >> "$GITHUB_STEP_SUMMARY"

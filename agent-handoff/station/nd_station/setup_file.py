@@ -45,8 +45,8 @@ def load(root: str, allow_http_hosts: Iterable[str] = ()) -> dict:
         raise ValueError(f"The stick's {SETUP_NAME} is missing or damaged ({e.__class__.__name__}). Prepare the stick again.") from None
     if not isinstance(raw, dict):
         raise ValueError(f"The stick's {SETUP_NAME} is damaged. Prepare the stick again.")
-    key = str(raw.get("stick_key") or "")
-    if not _KEY_RE.match(key):
+    key = raw.get("stick_key") or None  # absent: this stick registers by hand (E), as before
+    if key is not None and not _KEY_RE.match(str(key)):
         raise ValueError(f"The stick's {SETUP_NAME} has no valid stick key. Prepare the stick again.")
     wifi = raw.get("wifi") or None
     if wifi is not None:

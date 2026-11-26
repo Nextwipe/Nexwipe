@@ -16,6 +16,7 @@ import {
 import { errorMessage } from "@/components/nd/page";
 import { useOrg } from "@/lib/org-context";
 import { zipFiles } from "@/lib/zip";
+import { StickImageDownload } from "@/components/nd/stick-image-download";
 import helperPs1 from "../../../agent-handoff/windows-helper/nexwipe.ps1?raw";
 import helperTestPage from "../../../agent-handoff/windows-helper/nexwipe-test.html?raw";
 import helperCmd from "../../../agent-handoff/windows-helper/Start NexWipe.cmd?raw";
@@ -142,14 +143,16 @@ export function PrepareUsbStick({
         <DialogHeader>
           <DialogTitle>Prepare USB stick</DialogTitle>
           <DialogDescription>
-            Puts the read-only NexWipe program for Windows on a USB stick. On a laptop that still
-            starts Windows, open the stick and double-click <b>Start NexWipe.cmd</b>: it reports the
-            laptop&apos;s hardware here and can restart the laptop into the NexWipe boot stick. It
-            never erases or changes any disk. The stick does not need formatting.
+            One stick does both jobs. In Windows, open the stick and double-click{" "}
+            <b>Start NexWipe.cmd</b> to report the laptop here. On a laptop that does not start
+            Windows, press the boot-menu key at power-on (Dell/Lenovo F12, HP F9) and choose the
+            stick. NexWipe never erases or changes the laptop&apos;s disks.
           </DialogDescription>
         </DialogHeader>
         {!files ? (
           <form id="prepare-stick" onSubmit={onCreate} className="space-y-4">
+            <StickImageDownload />
+            <p className="text-sm font-medium">2. NexWipe for Windows (files on the same stick)</p>
             <div className="space-y-1.5">
               <Label htmlFor="stick-label">Stick name (optional)</Label>
               <Input

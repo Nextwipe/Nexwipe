@@ -154,7 +154,7 @@ class Station:
 
     def _auto_enroll(self) -> None:
         """Register this stick with the org's stick key from the setup file (no typing at the laptop)."""
-        if not (self.setup and self.stick_uid) or time.monotonic() < self._next_auto_enroll:
+        if not (self.setup and self.setup["stick_key"] and self.stick_uid) or time.monotonic() < self._next_auto_enroll:
             return
         self._next_auto_enroll = time.monotonic() + 60
         boot_serial = self.v.discovery.get("station", {}).get("boot_medium_serial")

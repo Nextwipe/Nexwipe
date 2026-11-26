@@ -50,6 +50,7 @@ import { Route as AuthenticatedAppPoliciesIndexRouteImport } from './routes/_aut
 import { Route as AuthenticatedAppPoliciesPolicyIdRouteImport } from './routes/_authenticated/app.policies.$policyId'
 import { Route as AuthenticatedAppProjectsIndexRouteImport } from './routes/_authenticated/app.projects.index'
 import { Route as AuthenticatedAppProjectsProjectIdRouteImport } from './routes/_authenticated/app.projects.$projectId'
+import { Route as ApiPublicStickImageSplatRouteImport } from './routes/api/public/stick-image/$'
 import { Route as ApiPublicAgentV1SplatRouteImport } from './routes/api/public/agent/v1/$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -271,6 +272,12 @@ const AuthenticatedAppProjectsProjectIdRoute =
     path: '/projects/$projectId',
     getParentRoute: () => AuthenticatedAppRoute,
   } as any)
+const ApiPublicStickImageSplatRoute =
+  ApiPublicStickImageSplatRouteImport.update({
+    id: '/api/public/stick-image/$',
+    path: '/api/public/stick-image/$',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicAgentV1SplatRoute = ApiPublicAgentV1SplatRouteImport.update({
   id: '/api/public/agent/v1/$',
   path: '/api/public/agent/v1/$',
@@ -313,6 +320,7 @@ export interface FileRoutesByFullPath {
   '/app/jobs/$jobId': typeof AuthenticatedAppJobsJobIdRoute
   '/app/policies/$policyId': typeof AuthenticatedAppPoliciesPolicyIdRoute
   '/app/projects/$projectId': typeof AuthenticatedAppProjectsProjectIdRoute
+  '/api/public/stick-image/$': typeof ApiPublicStickImageSplatRoute
   '/app/chromebooks/': typeof AuthenticatedAppChromebooksIndexRoute
   '/app/inventory/': typeof AuthenticatedAppInventoryIndexRoute
   '/app/jobs/': typeof AuthenticatedAppJobsIndexRoute
@@ -355,6 +363,7 @@ export interface FileRoutesByTo {
   '/app/jobs/$jobId': typeof AuthenticatedAppJobsJobIdRoute
   '/app/policies/$policyId': typeof AuthenticatedAppPoliciesPolicyIdRoute
   '/app/projects/$projectId': typeof AuthenticatedAppProjectsProjectIdRoute
+  '/api/public/stick-image/$': typeof ApiPublicStickImageSplatRoute
   '/app/chromebooks': typeof AuthenticatedAppChromebooksIndexRoute
   '/app/inventory': typeof AuthenticatedAppInventoryIndexRoute
   '/app/jobs': typeof AuthenticatedAppJobsIndexRoute
@@ -400,6 +409,7 @@ export interface FileRoutesById {
   '/_authenticated/app/jobs/$jobId': typeof AuthenticatedAppJobsJobIdRoute
   '/_authenticated/app/policies/$policyId': typeof AuthenticatedAppPoliciesPolicyIdRoute
   '/_authenticated/app/projects/$projectId': typeof AuthenticatedAppProjectsProjectIdRoute
+  '/api/public/stick-image/$': typeof ApiPublicStickImageSplatRoute
   '/_authenticated/app/chromebooks/': typeof AuthenticatedAppChromebooksIndexRoute
   '/_authenticated/app/inventory/': typeof AuthenticatedAppInventoryIndexRoute
   '/_authenticated/app/jobs/': typeof AuthenticatedAppJobsIndexRoute
@@ -445,6 +455,7 @@ export interface FileRouteTypes {
     | '/app/jobs/$jobId'
     | '/app/policies/$policyId'
     | '/app/projects/$projectId'
+    | '/api/public/stick-image/$'
     | '/app/chromebooks/'
     | '/app/inventory/'
     | '/app/jobs/'
@@ -487,6 +498,7 @@ export interface FileRouteTypes {
     | '/app/jobs/$jobId'
     | '/app/policies/$policyId'
     | '/app/projects/$projectId'
+    | '/api/public/stick-image/$'
     | '/app/chromebooks'
     | '/app/inventory'
     | '/app/jobs'
@@ -531,6 +543,7 @@ export interface FileRouteTypes {
     | '/_authenticated/app/jobs/$jobId'
     | '/_authenticated/app/policies/$policyId'
     | '/_authenticated/app/projects/$projectId'
+    | '/api/public/stick-image/$'
     | '/_authenticated/app/chromebooks/'
     | '/_authenticated/app/inventory/'
     | '/_authenticated/app/jobs/'
@@ -556,6 +569,7 @@ export interface RootRouteChildren {
   WorkflowRoute: typeof WorkflowRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   InviteTokenRoute: typeof InviteTokenRoute
+  ApiPublicStickImageSplatRoute: typeof ApiPublicStickImageSplatRoute
   ApiPublicAgentV1SplatRoute: typeof ApiPublicAgentV1SplatRoute
 }
 
@@ -848,6 +862,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAppProjectsProjectIdRouteImport
       parentRoute: typeof AuthenticatedAppRoute
     }
+    '/api/public/stick-image/$': {
+      id: '/api/public/stick-image/$'
+      path: '/api/public/stick-image/$'
+      fullPath: '/api/public/stick-image/$'
+      preLoaderRoute: typeof ApiPublicStickImageSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/agent/v1/$': {
       id: '/api/public/agent/v1/$'
       path: '/api/public/agent/v1/$'
@@ -948,6 +969,7 @@ const rootRouteChildren: RootRouteChildren = {
   WorkflowRoute: WorkflowRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   InviteTokenRoute: InviteTokenRoute,
+  ApiPublicStickImageSplatRoute: ApiPublicStickImageSplatRoute,
   ApiPublicAgentV1SplatRoute: ApiPublicAgentV1SplatRoute,
 }
 export const routeTree = rootRouteImport
