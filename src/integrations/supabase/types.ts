@@ -192,6 +192,8 @@ export type Database = {
           revoked_by: string | null
           site_id: string | null
           status: Database["public"]["Enums"]["agent_status"]
+          stick_id: string | null
+          stick_part: string | null
         }
         Insert: {
           agent_version?: string | null
@@ -225,6 +227,8 @@ export type Database = {
           revoked_by?: string | null
           site_id?: string | null
           status?: Database["public"]["Enums"]["agent_status"]
+          stick_id?: string | null
+          stick_part?: string | null
         }
         Update: {
           agent_version?: string | null
@@ -258,6 +262,8 @@ export type Database = {
           revoked_by?: string | null
           site_id?: string | null
           status?: Database["public"]["Enums"]["agent_status"]
+          stick_id?: string | null
+          stick_part?: string | null
         }
         Relationships: [
           {
@@ -272,6 +278,13 @@ export type Database = {
             columns: ["org_id", "site_id"]
             isOneToOne: false
             referencedRelation: "sites"
+            referencedColumns: ["org_id", "id"]
+          },
+          {
+            foreignKeyName: "agents_stick_fk"
+            columns: ["org_id", "stick_id"]
+            isOneToOne: false
+            referencedRelation: "sticks"
             referencedColumns: ["org_id", "id"]
           },
         ]
@@ -2143,6 +2156,119 @@ export type Database = {
           },
         ]
       }
+      stick_enroll_failures: {
+        Row: {
+          at: string
+          source_hash: string
+        }
+        Insert: {
+          at?: string
+          source_hash: string
+        }
+        Update: {
+          at?: string
+          source_hash?: string
+        }
+        Relationships: []
+      }
+      stick_keys: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          key_hash: string
+          key_prefix: string
+          label: string
+          max_sticks: number | null
+          org_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          key_hash: string
+          key_prefix: string
+          label: string
+          max_sticks?: number | null
+          org_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          key_hash?: string
+          key_prefix?: string
+          label?: string
+          max_sticks?: number | null
+          org_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stick_keys_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sticks: {
+        Row: {
+          blocked_at: string | null
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          org_id: string
+          stick_key_id: string
+          stick_uid: string
+          usb_serial: string | null
+        }
+        Insert: {
+          blocked_at?: string | null
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          org_id: string
+          stick_key_id: string
+          stick_uid: string
+          usb_serial?: string | null
+        }
+        Update: {
+          blocked_at?: string | null
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          org_id?: string
+          stick_key_id?: string
+          stick_uid?: string
+          usb_serial?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sticks_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sticks_org_id_stick_key_id_fkey"
+            columns: ["org_id", "stick_key_id"]
+            isOneToOne: false
+            referencedRelation: "stick_keys"
+            referencedColumns: ["org_id", "id"]
+          },
+        ]
+      }
     }
     Views: {
       batch_device_counts: {
@@ -2362,6 +2488,20 @@ export type Database = {
         }
         Returns: Json
       }
+      agent_enroll_stick: {
+        Args: {
+          _hostname: string
+          _key: string
+          _name: string
+          _part: string
+          _platform: string
+          _source: string
+          _stick_uid: string
+          _usb_serial: string
+          _version: string
+        }
+        Returns: Json
+      }
       agent_heartbeat: {
         Args: { _agent: string; _state: string; _version: string }
         Returns: Json
@@ -2529,11 +2669,21 @@ export type Database = {
         Args: { _note: string; _policy: string; _rules: Json }
         Returns: string
       }
+      create_stick_key: {
+        Args: {
+          _expires_at: string
+          _label: string
+          _max_sticks: number
+          _org: string
+        }
+        Returns: Json
+      }
       current_aal: { Args: never; Returns: string }
       device_all_drives_approved: {
         Args: { _device: string }
         Returns: boolean
       }
+      disconnect_stick_key: { Args: { _key_id: string }; Returns: number }
       has_client_grant: { Args: { _client: string }; Returns: boolean }
       has_org_role: {
         Args: {
@@ -2607,6 +2757,7 @@ export type Database = {
       revoke_enrollment_token: { Args: { _token: string }; Returns: undefined }
       revoke_invitation: { Args: { _invitation: string }; Returns: undefined }
       revoke_member: { Args: { _membership: string }; Returns: undefined }
+      revoke_stick_key: { Args: { _key_id: string }; Returns: undefined }
       set_policy_archived: {
         Args: { _archived: boolean; _policy: string }
         Returns: undefined
