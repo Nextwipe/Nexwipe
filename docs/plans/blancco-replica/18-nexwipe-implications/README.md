@@ -85,7 +85,7 @@ Nothing is built until the owner approves this text:
 
 | # | Rule | Plan | Phase |
 |---|---|---|---|
-| 33 | Numbered migration + undo file | Each change is `drizzle/migrations/00NN_<name>.sql` with `drizzle/rollback/00NN_<name>.down.sql`. Next free number at time of writing is **0029** (0028 is applied in Lovable as `0028_org_stick_keys_apply.sql`; Lovable sometimes saves its own copy under the next number — check `drizzle/migrations` and the journal again before writing) | V1 |
+| 33 | Numbered migration + undo file | Each change is `drizzle/migrations/00NN_<name>.sql` with `drizzle/rollback/00NN_<name>.down.sql`. Next free number is **0030** (Lovable added `0029_laptop_stages_read_signed_in_only.sql` on 2026-11-27; it sometimes adds its own migrations — always check `drizzle/migrations` and `meta/_journal.json` on a freshly pulled main before numbering) | V1 |
 | 34 | Local rehearsal | On a local throwaway database: apply on top of 0000..N-1 with data, re-run safely, undo restores an identical schema dump, all `tests/db/*.sql` pass; add new `tests/db` checks for each new RLS/RPC | V1 |
 | 35 | Owner applies in Lovable | Prompt: "Apply the SQL in `drizzle/migrations/00NN_<name>.sql` to the database exactly as written. Do not modify it." Never run SQL against the live database from a local machine | V1 |
 | 36 | Order | push → apply in Lovable → check preview → Publish, so the published site never needs a column the database lacks. Every handover says whether it contains a migration | V1 |
